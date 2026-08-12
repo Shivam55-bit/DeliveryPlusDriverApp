@@ -20,6 +20,11 @@ import LinearGradient from "react-native-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import API, { getAuthToken, clearAuthToken } from "../services/api";
 import AppIcon from "../components/common/AppIcon";
+import {
+  extractPaymentProofUrl,
+  getSafeUploadLog,
+  isPaymentProofUrl,
+} from "../utils/paymentProof";
 
 export default function CompleteJobScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
@@ -47,7 +52,7 @@ export default function CompleteJobScreen({ navigation, route }) {
 
   const isOtherPaymentMissingDetails = paymentMethod === "other" && !otherDetails.trim();
   const isOnlinePaymentProofRequired = paymentMethod === "online" && !imageObj;
-  const isSubmitDisabled = submitting || isOtherPaymentMissingDetails || isOnlinePaymentProofRequired;
+  const isSubmitDisabled = isOtherPaymentMissingDetails || isOnlinePaymentProofRequired;
 
   const isMovingJob = job.isMovingJob || job.jobTypeKey === "moving";
   const pricing = job.pricing || {};
@@ -78,86 +83,6 @@ export default function CompleteJobScreen({ navigation, route }) {
   const handleBack = () => {
     Keyboard.dismiss();
     navigation.goBack();
-  };
-
-  const handleApiError = (error) => {
-    const status = error.response?.status;
-    const responseData = error.response?.data;
-
-    console.warn("JOB_COMPLETION_API_ERROR", {
-      status,
-      data: responseData,
-      message: responseData?.message,
-      errors: responseData?.errors,
-    });
-
-    if (status === 401) {
-      clearAuthToken();
-      Alert.alert("Session Expired", "Please sign in again to continue.", [
-        {
-          text: "OK",
-          onPress: () => navigation.reset({ index: 0, routes: [{ name: "Login" }] }),
-        },
-      ]);
-      return;
-    }
-
-    if (status === 413) {
-      Alert.alert(
-        "Upload Error",
-        "Uploaded signature or image is too large. Please use a smaller image."
-      );
-      return;
-    }
-
-    const backendMessage =
-      responseData?.message ||
-      responseData?.error ||
-      (typeof responseData?.errors === "string" ? responseData.errors : undefined) ||
-      (Array.isArray(responseData?.errors)
-        ? responseData.errors.join(" \n")
-        : undefined);
-
-    const message =
-      backendMessage || error.message || "Unable to complete job. Please try again.";
-
-    Alert.alert("Validation Error", String(message));
-  };
-
-  const uploadPhotoIfAny = async () => {
-    if (!imageObj || !jobId) return null;
-
-    const formData = new FormData();
-    const fileName =
-      imageObj.fileName || `photo_${Date.now()}.${(imageObj.uri || "").split(".").pop() || "jpg"}`;
-
-    formData.append("photos", {
-      uri: imageObj.uri,
-      type: imageObj.type || "image/jpeg",
-      name: fileName,
-    });
-
-    const token = getAuthToken();
-
-    const response = await fetch(`${API.defaults.baseURL}/jobs/${jobId}/photos`, {
-      method: "POST",
-      headers: {
-        Authorization: token ? `Bearer ${token}` : "",
-        "Content-Type": "multipart/form-data",
-      },
-      body: formData,
-    });
-
-    if (!response.ok) {
-      if (response.status === 413) {
-        throw { response: { status: 413 } };
-      }
-      const errText = await response.text().catch(() => null);
-      throw new Error(errText || "Photo upload failed");
-    }
-
-    const responseData = await response.json();
-    return responseData?.data ?? responseData;
   };
 
   const handleSubmitComplete = async () => {
@@ -199,33 +124,43 @@ export default function CompleteJobScreen({ navigation, route }) {
       return;
     }
 
-    if (submitting) {
-      return;
-    }
-
     setSubmitting(true);
 
     try {
-      // Upload photo once if present
       let photoUpload = null;
       if (imageObj) {
-        photoUpload = await uploadPhotoIfAny();
+        const formData = new FormData();
+        const fileName = imageObj.fileName || `photo_${Date.now()}.${(imageObj.uri || "").split(".").pop() || "jpg"}`;
+        formData.append("photos", {
+          uri: imageObj.uri,
+          type: imageObj.type || "image/jpeg",
+          name: fileName,
+        });
+
+        const token = getAuthToken();
+        const response = await fetch(`${API.defaults.baseURL}/jobs/${jobId}/photos`, {
+          method: "POST",
+          headers: {
+            Authorization: token ? `Bearer ${token}` : "",
+            "Content-Type": "multipart/form-data",
+          },
+          body: formData,
+        });
+
+        if (!response.ok) {
+          const errorBody = await response.text().catch(() => "");
+          throw new Error(errorBody || `Photo upload failed (${response.status})`);
+        }
+        photoUpload = await response.json();
       }
 
-      const paymentProofUrl =
-        photoUpload?.paymentProofUrl ??
-        photoUpload?.proofUrl ??
-        photoUpload?.photoUrl ??
-        photoUpload?.imageUrl ??
-        photoUpload?.url ??
-        photoUpload?.path ??
-        photoUpload?.data?.url ??
-        photoUpload?.data?.fileUrl ??
-        photoUpload?.data?.uploadUrl ??
-        photoUpload?.data?.photoUrl ??
-        photoUpload?.data?.imageUrl ??
-        (typeof photoUpload === "string" ? photoUpload : undefined);
-      const paymentProofValue = paymentProofUrl || undefined;
+      const paymentProofUrl = extractPaymentProofUrl(photoUpload);
+
+      console.log("JOB_PHOTO_UPLOAD_RESPONSE", getSafeUploadLog(photoUpload, paymentProofUrl));
+
+      if (imageObj && !isPaymentProofUrl(paymentProofUrl)) {
+        throw new Error("Photo uploaded, but the server did not return a valid proof URL.");
+      }
 
       const payload = {
         termsAccepted: Boolean(termsAccepted),
@@ -249,42 +184,31 @@ export default function CompleteJobScreen({ navigation, route }) {
         paymentNotes: notes.trim() || undefined,
         completionNotes: notes.trim() || "Job completed by driver",
         damageReport: notes.trim() || undefined,
-        amountReceived:
-          pricing.finalCost || pricing.minimumEstimatedCost || undefined,
+        amountReceived: pricing.finalCost || pricing.minimumEstimatedCost || undefined,
         paymentProofUrl,
-        paymentProof: paymentProofValue,
+        paymentProof: paymentProofUrl,
       };
 
       console.log("JOB_COMPLETION_PAYLOAD_DEBUG", {
-        jobId,
-        termsAccepted: Boolean(termsAccepted),
-        termsVersion: payload.termsVersion,
-        hasCustomerEndSignature: !!customerEndSignature,
-        paymentMethod: payload.paymentMethod,
-        hasPaymentProof: !!paymentProofValue,
-        hasPaymentProofUrl: !!paymentProofUrl,
-        paymentTransactionReference: !!payload.paymentTransactionReference,
-        otherPaymentDetails: !!payload.otherPaymentDetails,
-        amountReceived: payload.amountReceived,
-        completionNotes: payload.completionNotes,
-        damageReport: notes.trim() || undefined,
+        ...payload,
+        customerEndSignature: Boolean(payload.customerEndSignature),
+        signature: Boolean(payload.signature),
+        customerSignature: Boolean(payload.customerSignature),
+        driverCompletionSignature: Boolean(payload.driverCompletionSignature),
       });
 
       await API.post(`/jobs/${jobId}/complete`, payload);
 
       Alert.alert("Job Completed!", "The job has been finished successfully.", [
-        {
-          text: "OK",
-          onPress: () => {
-            navigation.reset({
-              index: 0,
-              routes: [{ name: "Home" }],
-            });
-          },
-        },
+        { text: "OK", onPress: () => navigation.reset({ index: 0, routes: [{ name: "Home" }] }) },
       ]);
     } catch (error) {
-      handleApiError(error);
+      if (error.response?.status === 401) {
+        clearAuthToken();
+        navigation.reset({ index: 0, routes: [{ name: "Login" }] });
+      } else {
+        Alert.alert("Error", error.message || "Unable to complete job.");
+      }
     } finally {
       setSubmitting(false);
     }
@@ -508,15 +432,15 @@ export default function CompleteJobScreen({ navigation, route }) {
 
             {/* ── Submit Button ── */}
             <TouchableOpacity
-              style={[styles.submitBtn, (submitting || isSubmitDisabled) && styles.submitBtnDisabled]}
+              style={[styles.submitBtn, isSubmitDisabled && styles.submitBtnDisabled]}
               onPress={handleSubmitComplete}
-              disabled={isSubmitDisabled}
+              disabled={isSubmitDisabled || submitting}
               activeOpacity={0.8}
             >
               <Text style={styles.submitBtnText}>
                 {submitting ? "Completing Job..." : "Complete & Finish Job"}
               </Text>
-              <AppIcon library="Ionicons" name="checkmark-done-sharp" size={20} color="#FFF" />
+              <AppIcon library="Ionicons" name="arrow-forward" size={20} color="#FFF" />
             </TouchableOpacity>
           </ScrollView>
         </TouchableWithoutFeedback>

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -10,15 +10,13 @@ import {
   Alert,
   StatusBar,
 } from "react-native";
-import Signature from "react-native-signature-canvas";
 import LinearGradient from "react-native-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import API, { getAuthToken } from "../services/api";
+import API from "../services/api";
 import AppIcon from "../components/common/AppIcon";
 
 export default function JobCompletionTermsScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
-  const signatureRef = useRef(null);
 
   const jobId = route?.params?.jobId;
   const job = route?.params?.job || {};
@@ -33,9 +31,6 @@ export default function JobCompletionTermsScreen({ navigation, route }) {
     new Date().toLocaleDateString("en-US")
   );
   const [driverName, setDriverName] = useState("");
-  const [signatureData, setSignatureData] = useState(null);
-  const [hasSignature, setHasSignature] = useState(false);
-  const [isSigning, setIsSigning] = useState(false);
   const [driverProfileName, setDriverProfileName] = useState("");
 
   const jobReference =
@@ -43,21 +38,6 @@ export default function JobCompletionTermsScreen({ navigation, route }) {
   const jobTypeLabel =
     job.jobTypeLabel || job.jobType || job.type || job.serviceType || "Job";
 
-  const handleSignatureOK = (signature) => {
-    if (!signature) {
-      Alert.alert("Signature Required", "Please provide a valid signature.");
-      return;
-    }
-    setSignatureData(signature);
-    setHasSignature(Boolean(signature));
-  };
-
-  const handleSignatureEmpty = () => {
-    Alert.alert(
-      "Signature Empty",
-      "Please draw the customer signature before proceeding."
-    );
-  };
 
   useEffect(() => {
     const fetchDriverProfile = async () => {
@@ -75,11 +55,6 @@ export default function JobCompletionTermsScreen({ navigation, route }) {
     fetchDriverProfile();
   }, []);
 
-  const handleClearSignature = () => {
-    setSignatureData(null);
-    setHasSignature(false);
-    signatureRef.current?.clearSignature();
-  };
 
   const handleTermsScroll = ({ nativeEvent }) => {
     const { layoutMeasurement, contentOffset, contentSize } = nativeEvent;
@@ -158,12 +133,8 @@ export default function JobCompletionTermsScreen({ navigation, route }) {
       return;
     }
 
-    if (!signatureData || !hasSignature) {
-      signatureRef.current?.readSignature();
-      return;
-    }
-
-    navigation.navigate("CompleteJob", {
+    navigation.navigate("Signature", {
+      type: "complete",
       jobId,
       job,
       termsAccepted: true,
@@ -171,11 +142,9 @@ export default function JobCompletionTermsScreen({ navigation, route }) {
       deliveryConfirmed,
       stairsAtProperty,
       stairsWaiverAccepted,
-      customerEndSignature: signatureData,
       customerSignatureName: customerSignatureName.trim(),
       customerSignatureDate: customerSignatureDate.trim(),
       driverName: driverName.trim() || driverProfileName.trim(),
-      driverCompletionSignature: signatureData,
     });
   };
 
@@ -187,8 +156,7 @@ export default function JobCompletionTermsScreen({ navigation, route }) {
     (stairsAtProperty === "no" || stairsWaiverAccepted) &&
     !!customerSignatureName.trim() &&
     !!customerSignatureDate.trim() &&
-    !!driverName.trim() &&
-    hasSignature;
+    !!driverName.trim();
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -218,8 +186,6 @@ export default function JobCompletionTermsScreen({ navigation, route }) {
       <ScrollView
         contentContainerStyle={[styles.scrollContent, { paddingBottom: 40 + insets.bottom }]}
         showsVerticalScrollIndicator={false}
-        scrollEnabled={!isSigning}
-        bounces={!isSigning}
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.card}>
@@ -429,73 +395,13 @@ export default function JobCompletionTermsScreen({ navigation, route }) {
           </View>
         </View>
 
-        <View style={styles.card}>
-          <View style={styles.signatureHeaderRow}>
-            <Text style={styles.cardTitle}>Customer Signature</Text>
-            {signatureData ? (
-              <View style={styles.signedBadge}>
-                <AppIcon library="Ionicons" name="checkmark" size={12} color="#16A34A" />
-                <Text style={styles.signedBadgeText}>Signed</Text>
-              </View>
-            ) : null}
-          </View>
-          <Text style={styles.cardSub}>
-            Ask the customer to sign in the box below.
-          </Text>
-
-          <View style={styles.signatureCanvasWrap}>
-            <Signature
-              ref={signatureRef}
-              onOK={handleSignatureOK}
-              onEmpty={handleSignatureEmpty}
-              onBegin={() => setIsSigning(true)}
-              onEnd={() => setIsSigning(false)}
-              descriptionText="Sign above"
-              clearText="Clear"
-              confirmText="Confirm"
-              autoClear={false}
-              disabled={!termsAccepted}
-              penColor="#0F172A"
-              backgroundColor="#FFFFFF"
-              webStyle={
-                "html, body { margin: 0; padding: 0; overflow: hidden !important; touch-action: none !important; } " +
-                "canvas { touch-action: none !important; } " +
-                ".m-signature-pad--footer { display: none !important; } " +
-                ".m-signature-pad { width: 100% !important; height: 100% !important; }"
-              }
-            />
-          </View>
-
-          <View style={styles.signatureActionRow}>
-            <TouchableOpacity
-              style={styles.clearBtn}
-              onPress={handleClearSignature}
-              activeOpacity={0.8}
-            >
-              <AppIcon library="Ionicons" name="refresh-outline" size={16} color="#475569" />
-              <Text style={styles.clearBtnText}>Clear Signature</Text>
-            </TouchableOpacity>
-
-            {!signatureData ? (
-              <TouchableOpacity
-                style={styles.captureBtn}
-                onPress={() => signatureRef.current?.readSignature()}
-                activeOpacity={0.8}
-              >
-                <AppIcon library="Ionicons" name="checkmark-sharp" size={16} color="#FFF" />
-                <Text style={styles.captureBtnText}>Confirm Signature</Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        </View>
-
         <TouchableOpacity
           style={[styles.continueBtn, !isContinueReady && styles.continueBtnDisabled]}
           onPress={handleContinue}
           disabled={!isContinueReady}
           activeOpacity={0.8}
         >
-          <Text style={styles.continueBtnText}>Continue to Payment</Text>
+          <Text style={styles.continueBtnText}>Continue to Signature</Text>
           <AppIcon library="Ionicons" name="arrow-forward" size={18} color="#FFF" />
         </TouchableOpacity>
       </ScrollView>
@@ -711,51 +617,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "700",
     color: "#16A34A",
-  },
-  signatureCanvasWrap: {
-    height: 220,
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-    borderRadius: 14,
-    overflow: "hidden",
-    backgroundColor: "#FFF",
-    marginBottom: 12,
-  },
-  signatureActionRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 10,
-  },
-  clearBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    backgroundColor: "#F1F5F9",
-  },
-  clearBtnText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#475569",
-  },
-  captureBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    backgroundColor: "#0284C7",
-  },
-  captureBtnText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#FFF",
   },
   continueBtn: {
     flexDirection: "row",
