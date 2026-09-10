@@ -29,6 +29,13 @@ export const configureGoogleSignIn = async (webClientId = null, iosClientId = nu
       return false;
     }
 
+    // On iOS, native TurboModule throws native fatal error if neither GoogleService-Info.plist nor iosClientId is present.
+    if (Platform.OS === "ios" && (!iosClientId || typeof iosClientId !== "string" || !iosClientId.trim())) {
+      console.log("[GoogleAuth] Skipping GoogleSignin.configure on iOS because iosClientId is not provided.");
+      isConfigured = false;
+      return false;
+    }
+
     const config = {
       scopes: ["email", "profile"],
       offlineAccess: false,
@@ -75,12 +82,19 @@ export const signInWithGoogle = async () => {
       };
     }
 
+    if (Platform.OS === "ios" && !isConfigured) {
+      return {
+        success: false,
+        error: "Google Sign-In is not configured for iOS yet. Please use your Driver Email & Password to Sign In.",
+      };
+    }
+
     if (!isConfigured) {
       const ok = await configureGoogleSignIn();
       if (!ok && !isConfigured) {
         return {
           success: false,
-          error: "Google Sign-In is not configured for iOS yet. Please use Email/Password sign in.",
+          error: "Google Sign-In is not configured yet. Please use your Driver Email & Password to Sign In.",
         };
       }
     }
