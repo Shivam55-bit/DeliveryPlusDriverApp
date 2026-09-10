@@ -132,7 +132,7 @@ export default function SignInScreen({ navigation }) {
   const passwordInputRef = useRef(null);
 
   useEffect(() => {
-    configureGoogleSignIn();
+    configureGoogleSignIn().catch(() => {});
   }, []);
 
   const insets = useSafeAreaInsets();

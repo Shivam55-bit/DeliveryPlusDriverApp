@@ -42,14 +42,20 @@ export const configureGoogleSignIn = async (webClientId = null, iosClientId = nu
       config.iosClientId = iosClientId.trim();
     }
 
-    await Promise.resolve(GoogleSignin.configure(config)).catch((configErr) => {
-      console.warn("[GoogleAuth] GoogleSignin.configure warning:", configErr?.message);
-    });
-
-    isConfigured = true;
-    return true;
+    try {
+      const configureResult = GoogleSignin.configure(config);
+      if (configureResult && typeof configureResult.then === "function") {
+        await configureResult;
+      }
+      isConfigured = true;
+      return true;
+    } catch (confErr) {
+      console.warn("[GoogleAuth] GoogleSignin.configure warning:", confErr?.message || confErr);
+      isConfigured = false;
+      return false;
+    }
   } catch (err) {
-    console.warn("[GoogleAuth] configureGoogleSignIn error:", err?.message);
+    console.warn("[GoogleAuth] configureGoogleSignIn error:", err?.message || err);
     isConfigured = false;
     return false;
   }
@@ -70,7 +76,13 @@ export const signInWithGoogle = async () => {
     }
 
     if (!isConfigured) {
-      await configureGoogleSignIn();
+      const ok = await configureGoogleSignIn();
+      if (!ok && !isConfigured) {
+        return {
+          success: false,
+          error: "Google Sign-In is not configured for iOS yet. Please use Email/Password sign in.",
+        };
+      }
     }
 
     // Check Play Services support on Android

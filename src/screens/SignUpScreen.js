@@ -59,7 +59,7 @@ export default function SignUpScreen({ navigation }) {
   const confirmPasswordInputRef = useRef(null);
 
   useEffect(() => {
-    configureGoogleSignIn();
+    configureGoogleSignIn().catch(() => {});
   }, []);
 
   const insets = useSafeAreaInsets();
