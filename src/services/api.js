@@ -33,7 +33,11 @@ API.interceptors.request.use(async (config) => {
   }
 
   if (authToken) {
+    config.headers = config.headers || {};
     config.headers.Authorization = `Bearer ${authToken}`;
+    if (typeof config.headers.set === "function") {
+      config.headers.set("Authorization", `Bearer ${authToken}`);
+    }
   }
   return config;
 });

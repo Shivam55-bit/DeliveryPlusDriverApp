@@ -15,6 +15,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import EmptyState from "../components/EmptyState";
 import LoadingSpinner from "../components/LoadingSpinner";
 import AppIcon from "../components/common/AppIcon";
+import JobTimerBanner from "../components/JobTimerBanner";
 import API from "../services/api";
 import { getDriverVisiblePriceInfo } from "../utils/jobHelpers";
 
@@ -140,6 +141,12 @@ const normalizeJob = (job) => {
     status,
     statusLabel: statusStyle.label,
     rawStatus: job?.status,
+    startedAt:
+      job?.startedAt ??
+      job?.jobStartedAt ??
+      job?.actualStartTime ??
+      job?.timerStarted ??
+      null,
     distance: job?.distance || (job?.estimatedHours ? `${job.estimatedHours || ""}h` : ""),
     showPriceToDriver: priceInfo.showPriceToDriver,
     driverPrice: priceInfo.driverPrice,
@@ -298,6 +305,10 @@ export default function JobsScreen({ navigation }) {
             </View>
           </View>
         </View>
+
+        {["started", "inTransit", "arrived"].includes(item.status) ? (
+          <JobTimerBanner startedAt={item.startedAt} />
+        ) : null}
 
         <View style={styles.actionsRow}>
           {isCompleted ? (

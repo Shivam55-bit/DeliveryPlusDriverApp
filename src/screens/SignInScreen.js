@@ -132,7 +132,7 @@ export default function SignInScreen({ navigation }) {
   const passwordInputRef = useRef(null);
 
   useEffect(() => {
-    configureGoogleSignIn().catch(() => {});
+    configureGoogleSignIn().catch(() => { });
   }, []);
 
   const insets = useSafeAreaInsets();
@@ -173,15 +173,10 @@ export default function SignInScreen({ navigation }) {
           password,
         });
       } catch (err) {
-        // Only fallback if endpoint /auth/login/driver does not exist (404)
-        if (err?.response?.status === 404) {
-          response = await API.post("/auth/login", {
-            email: cleanEmail,
-            password,
-          });
-        } else {
-          throw err;
-        }
+        response = await API.post("/auth/login", {
+          email: cleanEmail,
+          password,
+        });
       }
 
       const payload = response?.data ?? response;
@@ -208,25 +203,11 @@ export default function SignInScreen({ navigation }) {
 
       navigation.replace("Home");
     } catch (error) {
-      // If server returns rate-limit (429), bypass error completely and sign in seamlessly
-      if (error?.response?.status === 429) {
-        console.log("[SignIn] Server rate-limited (429), bypassing error and granting seamless driver session");
-        const fallbackUser = {
-          email: cleanEmail,
-          name: cleanEmail.split("@")[0].charAt(0).toUpperCase() + cleanEmail.split("@")[0].slice(1),
-          role: "driver",
-        };
-        await setAuthToken(`driver-session-${Date.now()}`, fallbackUser);
-        navigation.replace("Home");
-        return;
-      }
-
       const message =
         error?.response?.data?.message ||
         error?.response?.data?.error ||
         error?.message ||
         "Incorrect email or password. Please try again.";
-
       Alert.alert("Unable to Sign In", message);
     } finally {
       setLoading(false);

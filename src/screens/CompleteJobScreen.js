@@ -237,7 +237,7 @@ export default function CompleteJobScreen({ navigation, route }) {
     navigation.navigate("Signature", {
       type: "complete",
       jobId,
-      job,
+      job: currentJob,
       customerSignatureName: customerName.trim(),
       customerName: customerName.trim(),
       onSignatureSaved: (sigBase64, name) => {

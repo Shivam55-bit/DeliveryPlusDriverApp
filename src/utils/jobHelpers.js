@@ -300,3 +300,45 @@ export const normalizeJob = (raw = {}) => {
     },
   };
 };
+
+/**
+ * Determines driver price visibility and formats visible price.
+ */
+export const getDriverVisiblePriceInfo = (job = {}) => {
+  const showPriceToDriver = Boolean(
+    job?.showDriverPrice ??
+    job?.showPriceToDriver ??
+    job?.pricing?.showDriverPrice ??
+    false
+  );
+
+  const rawPrice =
+    job?.driverPrice ??
+    job?.driverFee ??
+    job?.pricing?.driverPrice ??
+    job?.pricing?.driverFee ??
+    null;
+
+  const numPrice =
+    rawPrice !== null && rawPrice !== undefined && rawPrice !== ""
+      ? Number(rawPrice)
+      : null;
+
+  const isValidNumber =
+    numPrice !== null && Number.isFinite(numPrice) && numPrice >= 0;
+  const canShowPrice = showPriceToDriver && isValidNumber;
+
+  const formattedPrice = canShowPrice ? `$${numPrice.toFixed(2)}` : null;
+
+  return {
+    showPriceToDriver,
+    driverPrice: isValidNumber ? numPrice : null,
+    driverPriceType:
+      job?.driverPriceType ?? job?.pricing?.driverPriceType ?? "full",
+    driverPricePercentage:
+      job?.driverPricePercentage ?? job?.pricing?.driverPricePercentage ?? 0,
+    formattedPrice,
+    canShowPrice,
+  };
+};
+

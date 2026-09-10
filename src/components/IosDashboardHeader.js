@@ -14,6 +14,7 @@ import LinearGradient from "react-native-linear-gradient";
 import AppIcon from "./common/AppIcon";
 
 const truckImage = require("../assets/images/dashboardtruck_image-Photoroom.png");
+const logoImage = require("../assets/images/Logo.png");
 
 const COLORS = {
   navy900: "#061A33",
@@ -136,15 +137,11 @@ const IosDashboardHeader = memo(
               </View>
 
               <View style={styles.brandRow}>
-                <AppIcon
-                  library="MaterialCommunityIcons"
-                  name="truck-fast"
-                  size={18}
-                  color={COLORS.white}
+                <Image
+                  source={logoImage}
+                  style={styles.brandLogo}
+                  resizeMode="contain"
                 />
-                <Text style={styles.brandTitle}>
-                  DELIVERY <Text style={styles.brandTitlePlus}>PLUS</Text>
-                </Text>
               </View>
 
               <TouchableOpacity
@@ -373,16 +370,11 @@ const styles = StyleSheet.create({
   brandRow: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
   },
-  brandTitle: {
-    color: COLORS.white,
-    fontSize: 16,
-    fontWeight: "900",
-    letterSpacing: 0.8,
-    marginLeft: 6,
-  },
-  brandTitlePlus: {
-    color: COLORS.cyan400,
+  brandLogo: {
+    width: 145,
+    height: 38,
   },
   bellButton: {
     width: 42,

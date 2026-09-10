@@ -34,8 +34,11 @@ import {
 import AppIcon from "../components/common/AppIcon";
 import LoadingSpinner from "../components/LoadingSpinner";
 import IosDashboardHeader from "../components/IosDashboardHeader";
+import JobTimerBanner from "../components/JobTimerBanner";
 import API, { getStoredUser, clearAuthToken, getAuthToken, setAuthToken } from "../services/api";
 import { getDriverVisiblePriceInfo } from "../utils/jobHelpers";
+
+const logoImage = require("../assets/images/Logo.png");
 
 const COLORS = {
   navy900: "#061A33",
@@ -238,6 +241,12 @@ const normaliseJob = (job) => {
     pickup: typeof rawPickup === "string" ? rawPickup : "Pickup address not available",
     dropoff: typeof rawDropoff === "string" ? rawDropoff : "Drop-off address not available",
     time: formatScheduledTime(job),
+    startedAt:
+      job?.startedAt ??
+      job?.jobStartedAt ??
+      job?.actualStartTime ??
+      job?.timerStarted ??
+      null,
     type,
     showPriceToDriver: priceInfo.showPriceToDriver,
     driverPrice: priceInfo.driverPrice,
@@ -418,6 +427,10 @@ const JobCard = memo(({ job, onPress }) => {
         dropoff={job.dropoff}
       />
 
+      {job.status === "inProgress" ? (
+        <JobTimerBanner startedAt={job.startedAt} />
+      ) : null}
+
       <View style={styles.jobFooter}>
         {job.displayCost ? (
           <View style={styles.costBlock}>
@@ -500,22 +513,11 @@ const DashboardHeader = memo(
 
           <View style={styles.heroTopRow}>
             <View style={styles.brandWrap}>
-              <View style={styles.brandMark}>
-                <AppIcon
-                  library="MaterialCommunityIcons"
-                  name="truck-fast-outline"
-                  size={20}
-                  color={COLORS.white}
-                />
-              </View>
-              <View style={styles.brandCopy}>
-                <Text style={styles.brandText} numberOfLines={1}>
-                  DELIVERY PLUS
-                </Text>
-                <Text style={styles.brandCaption} numberOfLines={1}>
-                  DRIVER DASHBOARD
-                </Text>
-              </View>
+              <Image
+                source={logoImage}
+                style={styles.heroBrandLogo}
+                resizeMode="contain"
+              />
             </View>
 
             <TouchableOpacity
@@ -1167,6 +1169,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingRight: scale(10),
+  },
+  heroBrandLogo: {
+    width: scale(140),
+    height: verticalScale(36),
   },
   brandMark: {
     width: moderateScale(38),
