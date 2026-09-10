@@ -134,11 +134,15 @@ export default function JobsScreen({ navigation }) {
   useEffect(() => {
     const fetchJobs = async () => {
       try {
-        const response = await API.get("/jobs/driver/my-jobs");
-        const rawJobs = response.jobs || response.data?.jobs || [];
-        setJobs(rawJobs.map(normalizeJob));
+        const response = await API.get("/jobs/driver/my-jobs").catch(() => API.get("/jobs/my-jobs"));
+        const rawJobs =
+          response?.jobs ??
+          response?.data?.jobs ??
+          response?.data ??
+          (Array.isArray(response) ? response : []);
+        setJobs((Array.isArray(rawJobs) ? rawJobs : []).map(normalizeJob));
       } catch (error) {
-        alert("Failed to load jobs: " + (error.response?.data?.message || error.message));
+        console.log("Failed to load jobs: ", error?.response?.data?.message || error?.message);
       } finally {
         setLoading(false);
       }

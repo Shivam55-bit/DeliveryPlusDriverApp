@@ -97,14 +97,20 @@ const IosDashboardHeader = memo(
   }) => {
     const insets = useSafeAreaInsets();
 
-    const displayName =
+    const rawName =
       profile?.name ??
       profile?.fullName ??
       profile?.firstName ??
+      profile?.driverName ??
+      profile?.driver?.name ??
+      profile?.driver?.fullName ??
+      profile?.user?.name ??
+      profile?.user?.fullName ??
+      (profile?.email ? profile.email.split("@")[0] : "") ||
       "Driver";
 
-    const firstName =
-      String(displayName).trim().split(" ")[0] || "Driver";
+    const displayName = String(rawName).trim() || "Driver";
+    const firstName = displayName.split(" ")[0] || "Driver";
     const initial = firstName.charAt(0).toUpperCase();
 
     const topInset = Platform.OS === "ios" ? Math.max(insets.top, 44) + 16 : 16;
@@ -169,7 +175,7 @@ const IosDashboardHeader = memo(
               <View style={styles.greetingContainer}>
                 <Text style={styles.greetingText}>{getGreeting()}</Text>
                 <Text style={styles.driverName} numberOfLines={1}>
-                  {firstName.toLowerCase()}
+                  {displayName}
                 </Text>
                 <Text style={styles.dateText}>{getDateLabel()}</Text>
                 <Text style={styles.locationText}>Sydney, NSW</Text>

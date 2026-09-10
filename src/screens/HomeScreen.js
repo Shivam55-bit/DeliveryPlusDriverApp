@@ -34,7 +34,7 @@ import {
 import AppIcon from "../components/common/AppIcon";
 import LoadingSpinner from "../components/LoadingSpinner";
 import IosDashboardHeader from "../components/IosDashboardHeader";
-import API from "../services/api";
+import API, { getStoredUser, clearAuthToken, getAuthToken, setAuthToken } from "../services/api";
 import { getDriverVisiblePriceInfo } from "../utils/jobHelpers";
 
 const COLORS = {
@@ -748,14 +748,32 @@ const HomeScreen = ({ navigation }) => {
         setLoading(true);
       }
 
+      // 1. Immediately use cached user profile if available
+      try {
+        const cachedUser = await getStoredUser();
+        if (cachedUser && isMountedRef.current) {
+          setProfile((prev) => prev || cachedUser);
+        }
+      } catch (e) {}
+
       try {
         const [
           profileResponse,
           jobsResponse,
           notificationsResponse,
         ] = await Promise.all([
-          API.get("/auth/me"),
-          API.get("/jobs/driver/my-jobs"),
+          API.get("/auth/me").catch((err) => {
+            console.log("[Home] /auth/me error:", err?.response?.status, err?.message);
+            if (err?.response?.status === 401) {
+              clearAuthToken();
+              navigation.replace("Login");
+            }
+            return null;
+          }),
+          API.get("/jobs/driver/my-jobs").catch((err) => {
+            console.log("[Home] /jobs/driver/my-jobs error:", err?.response?.status, err?.message);
+            return API.get("/jobs/my-jobs").catch(() => null);
+          }),
           API.get("/notifications?limit=1").catch(
             () => null
           ),
@@ -763,15 +781,28 @@ const HomeScreen = ({ navigation }) => {
 
         const profileData =
           profileResponse?.user ??
+          profileResponse?.driver ??
+          profileResponse?.data?.user ??
+          profileResponse?.data?.driver ??
+          profileResponse?.data ??
           profileResponse ??
+          (await getStoredUser()) ??
           null;
+
+        if (profileData && profileResponse) {
+          const curToken = getAuthToken();
+          if (curToken) {
+            setAuthToken(curToken, profileData);
+          }
+        }
 
         const rawJobs =
           jobsResponse?.jobs ??
           jobsResponse?.data?.jobs ??
-          [];
+          jobsResponse?.data ??
+          (Array.isArray(jobsResponse) ? jobsResponse : []);
 
-        const normalisedJobs = rawJobs
+        const normalisedJobs = (Array.isArray(rawJobs) ? rawJobs : [])
           .map(normaliseJob)
           .filter((job) =>
             ["upcoming", "inProgress", "completed"].includes(
@@ -799,12 +830,14 @@ const HomeScreen = ({ navigation }) => {
 
         if (!isMountedRef.current) return;
 
-        setProfile(profileData);
-        setIsOnline(
-          profileData?.isOnline ??
-          profileData?.online ??
-          profileData?.availability !== "offline"
-        );
+        if (profileData) {
+          setProfile(profileData);
+          setIsOnline(
+            profileData?.isOnline ??
+            profileData?.online ??
+            profileData?.availability !== "offline"
+          );
+        }
         setJobs(homeJobs);
         setStats({
           assigned: upcomingJobs.length,
@@ -822,11 +855,7 @@ const HomeScreen = ({ navigation }) => {
       } catch (error) {
         if (!isMountedRef.current) return;
 
-        showToast(
-          error?.response?.data?.message ??
-          "Unable to load your dashboard.",
-          "error"
-        );
+        console.log("[Home] loadHomeData top error:", error);
       } finally {
         if (isMountedRef.current) {
           setLoading(false);
@@ -834,7 +863,7 @@ const HomeScreen = ({ navigation }) => {
         }
       }
     },
-    [showToast]
+    [navigation, showToast]
   );
 
   useEffect(() => {

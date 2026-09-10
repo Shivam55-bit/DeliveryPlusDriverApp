@@ -184,10 +184,21 @@ export default function SignInScreen({ navigation }) {
         payload?.accessToken ??
         payload?.token ??
         payload?.data?.accessToken ??
-        payload?.data?.token;
+        payload?.data?.token ??
+        response?.token ??
+        response?.accessToken;
+
+      const userObj =
+        payload?.user ??
+        payload?.driver ??
+        payload?.data?.user ??
+        payload?.data?.driver ??
+        payload?.profile ??
+        payload?.data ??
+        { email: cleanEmail, name: cleanEmail.split("@")[0] };
 
       if (token) {
-        await setAuthToken(token, payload?.user || payload?.driver || payload?.data?.user);
+        await setAuthToken(token, userObj);
       }
 
       navigation.replace("Home");

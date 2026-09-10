@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import colors from "../utils/colors";
 
-import { getStoredAuthToken, setAuthToken } from "../services/api";
+import API, { getStoredAuthToken, getStoredUser, setAuthToken, clearAuthToken } from "../services/api";
 
 const { width } = Dimensions.get("window");
 
@@ -67,19 +67,43 @@ export default function SplashScreen({ navigation }) {
     const checkAuthAndNavigate = async () => {
       try {
         const storedToken = await getStoredAuthToken();
-        setTimeout(() => {
-          if (storedToken && storedToken.trim().length > 0) {
-            setAuthToken(storedToken);
-            navigation.replace("Home");
-          } else {
-            navigation.replace("Login");
+        const storedUser = await getStoredUser();
+
+        if (storedToken && storedToken.trim().length > 0) {
+          await setAuthToken(storedToken, storedUser);
+          try {
+            const meRes = await API.get("/auth/me");
+            const meUser =
+              meRes?.user ??
+              meRes?.driver ??
+              meRes?.data?.user ??
+              meRes?.data?.driver ??
+              meRes;
+            if (meUser) {
+              await setAuthToken(storedToken, meUser);
+            }
+            setTimeout(() => {
+              navigation.replace("Home");
+            }, 1200);
+            return;
+          } catch (tokenErr) {
+            console.log("[Splash] Stored token expired or invalid, directing to Login");
+            await clearAuthToken();
+            setTimeout(() => {
+              navigation.replace("Login");
+            }, 1200);
+            return;
           }
-        }, 2200);
+        }
+
+        setTimeout(() => {
+          navigation.replace("Login");
+        }, 1200);
       } catch (err) {
         console.warn("[Splash] Auth check error:", err);
         setTimeout(() => {
           navigation.replace("Login");
-        }, 2200);
+        }, 1200);
       }
     };
 
