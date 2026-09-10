@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef } from "react";
 import { 
   View, 
   Text,
@@ -9,6 +9,8 @@ import {
   Dimensions 
 } from "react-native";
 import colors from "../utils/colors";
+
+import { getStoredAuthToken, setAuthToken } from "../services/api";
 
 const { width } = Dimensions.get("window");
 
@@ -62,12 +64,28 @@ export default function SplashScreen({ navigation }) {
     mainAnimation.start();
     dotAnimations.forEach((animation) => animation.start());
 
-    const timer = setTimeout(() => {
-      navigation.replace("Login");
-    }, 2800);
+    const checkAuthAndNavigate = async () => {
+      try {
+        const storedToken = await getStoredAuthToken();
+        setTimeout(() => {
+          if (storedToken && storedToken.trim().length > 0) {
+            setAuthToken(storedToken);
+            navigation.replace("Home");
+          } else {
+            navigation.replace("Login");
+          }
+        }, 2200);
+      } catch (err) {
+        console.warn("[Splash] Auth check error:", err);
+        setTimeout(() => {
+          navigation.replace("Login");
+        }, 2200);
+      }
+    };
+
+    checkAuthAndNavigate();
 
     return () => {
-      clearTimeout(timer);
       dotAnimations.forEach((animation) => animation.stop());
     };
   }, [navigation, fadeAnim, scaleAnim, dot1, dot2, dot3]);

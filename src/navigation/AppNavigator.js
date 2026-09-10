@@ -17,6 +17,7 @@ import CompleteJobScreen from "../screens/CompleteJobScreen";
 import JobCompletionTermsScreen from "../screens/JobCompletionTermsScreen";
 import VehicleDetailsScreen from "../screens/VehicleDetailsScreen";
 import PaymentMethodsScreen from "../screens/PaymentMethodsScreen";
+
 import HelpSupportScreen from "../screens/HelpSupportScreen";
 import TermsScreen from "../screens/TermsScreen";
 import PrivacyScreen from "../screens/PrivacyScreen";
@@ -120,6 +121,7 @@ export default function AppNavigator() {
             component={PaymentMethodsScreen}
             options={{ headerShown: false }}
           />
+
 
           <Stack.Screen
             name="HelpSupport"

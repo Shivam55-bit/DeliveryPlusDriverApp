@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import {
   View,
   Text,
@@ -35,6 +35,7 @@ export default function JobDetailScreen({ route, navigation }) {
   const [job, setJob] = useState(null);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
+  const scrollViewRef = useRef(null);
 
   const routeParams = route?.params;
   const rawParam = useMemo(() => routeParams?.job || null, [routeParams]);
@@ -166,24 +167,12 @@ export default function JobDetailScreen({ route, navigation }) {
     );
   }
 
-  const pricing = job.pricing || {};
-
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-      <StatusBar barStyle="light-content" backgroundColor="#0B2545" />
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
-      <View
-        style={[
-          styles.headerShell,
-          {
-            paddingTop: Math.max(insets.top + 8, 18),
-            minHeight: isCompactPhone ? 176 : 190,
-          },
-        ]}
-      >
-        <View pointerEvents="none" style={styles.headerOrbLarge} />
-        <View pointerEvents="none" style={styles.headerOrbSmall} />
-
+      {/* ── Header ── */}
+      <View style={styles.headerShell}>
         <View style={styles.headerTopRow}>
           <TouchableOpacity
             style={styles.headerIconButton}
@@ -196,16 +185,16 @@ export default function JobDetailScreen({ route, navigation }) {
               library="Ionicons"
               name="chevron-back"
               size={22}
-              color="#FFFFFF"
+              color="#0F172A"
             />
           </TouchableOpacity>
 
           <View style={styles.headerTitleBlock}>
-            <Text style={styles.headerEyebrow} numberOfLines={1}>
-              {job.isMovingJob ? "MOVING SERVICE" : "DELIVERY SERVICE"}
-            </Text>
             <Text style={styles.headerTitle} numberOfLines={1}>
               Job Details
+            </Text>
+            <Text style={styles.headerEyebrow} numberOfLines={1}>
+              {job.isMovingJob ? "MOVING SERVICE" : "DELIVERY SERVICE"}
             </Text>
           </View>
 
@@ -220,8 +209,8 @@ export default function JobDetailScreen({ route, navigation }) {
               <AppIcon
                 library="Ionicons"
                 name="call-outline"
-                size={20}
-                color="#FFFFFF"
+                size={19}
+                color="#0284C7"
               />
             </TouchableOpacity>
           ) : (
@@ -255,20 +244,29 @@ export default function JobDetailScreen({ route, navigation }) {
                 jobState.isCancelled && styles.headerStatusDotCancelled,
               ]}
             />
-            <Text style={styles.headerStatusText}>
+            <Text
+              style={[
+                styles.headerStatusText,
+                jobState.isCompleted && styles.headerStatusTextCompleted,
+                jobState.isInProgress && styles.headerStatusTextInProgress,
+                jobState.isPending && styles.headerStatusTextPending,
+                jobState.isCancelled && styles.headerStatusTextCancelled,
+              ]}
+            >
               {jobState.isCompleted
                 ? "Completed"
                 : jobState.isInProgress
-                ? "In Progress"
-                : jobState.isPending
-                ? "Pending"
-                : "Cancelled"}
+                  ? "In Progress"
+                  : jobState.isPending
+                    ? "Pending"
+                    : "Cancelled"}
             </Text>
           </View>
         </View>
       </View>
 
       <ScrollView
+        ref={scrollViewRef}
         contentContainerStyle={[
           styles.scrollContent,
           { paddingBottom: 132 + insets.bottom },
@@ -276,14 +274,14 @@ export default function JobDetailScreen({ route, navigation }) {
         showsVerticalScrollIndicator={false}
       >
         {/* ── Status & Timing Bar ── */}
-        <View style={styles.card}>
+        <View style={[styles.card, styles.statusCard]}>
           <View style={styles.jobTypeHeaderRow}>
             <View style={styles.typeTag}>
               <AppIcon
                 library="Ionicons"
                 name={job.isMovingJob ? "cube-outline" : "car-outline"}
                 size={16}
-                color="#0B2545"
+                color="#0284C7"
               />
               <Text style={styles.typeTagText}>JOB TYPE: {job.jobTypeLabel.toUpperCase()}</Text>
             </View>
@@ -409,58 +407,28 @@ export default function JobDetailScreen({ route, navigation }) {
           </View>
         </View>
 
-        {/* ── Pricing Details (MOVING JOBS ONLY) ── */}
-        {job.isMovingJob ? (
+        {/* ── Driver Pricing Details ── */}
+        {job.canShowPrice ? (
           <View style={styles.card}>
-            <Text style={styles.cardSectionTitle}>Moving Pricing Breakdown</Text>
+            <Text style={styles.cardSectionTitle}>Job Price</Text>
 
             <View style={styles.pricingGrid}>
-              {pricing.truckCount != null ? (
-                <View style={styles.pricingItem}>
-                  <Text style={styles.pricingLabel}>Truck Count</Text>
-                  <Text style={styles.pricingValue}>{pricing.truckCount}</Text>
-                </View>
-              ) : null}
+              <View style={styles.pricingItem}>
+                <Text style={styles.pricingLabel}>Driver Price</Text>
+                <Text style={[styles.pricingValue, styles.finalCostValue]}>
+                  {job.formattedPrice || `$${Number(job.driverPrice).toFixed(2)}`}
+                </Text>
+              </View>
 
-              {pricing.movers != null ? (
+              {job.driverPriceType ? (
                 <View style={styles.pricingItem}>
-                  <Text style={styles.pricingLabel}>Movers</Text>
-                  <Text style={styles.pricingValue}>{pricing.movers}</Text>
-                </View>
-              ) : null}
-
-              {pricing.hourlyRate != null ? (
-                <View style={styles.pricingItem}>
-                  <Text style={styles.pricingLabel}>Hourly Rate</Text>
-                  <Text style={styles.pricingValue}>${pricing.hourlyRate}/hr</Text>
-                </View>
-              ) : null}
-
-              {pricing.minimumCharge != null ? (
-                <View style={styles.pricingItem}>
-                  <Text style={styles.pricingLabel}>Minimum Charge</Text>
-                  <Text style={styles.pricingValue}>${pricing.minimumCharge}</Text>
-                </View>
-              ) : null}
-
-              {pricing.minimumEstimatedCost != null ? (
-                <View style={styles.pricingItem}>
-                  <Text style={styles.pricingLabel}>Estimated Cost</Text>
-                  <Text style={styles.pricingValue}>${pricing.minimumEstimatedCost}</Text>
-                </View>
-              ) : null}
-
-              {pricing.finalCost != null ? (
-                <View style={styles.pricingItem}>
-                  <Text style={styles.pricingLabel}>Final Cost</Text>
-                  <Text style={[styles.pricingValue, styles.finalCostValue]}>
-                    ${pricing.finalCost}
-                  </Text>
+                  <Text style={styles.pricingLabel}>Price Type</Text>
+                  <Text style={styles.pricingValue}>{job.driverPriceType}</Text>
                 </View>
               ) : null}
             </View>
           </View>
-        ) : null /* Delivery jobs pricing completely omitted */}
+        ) : null /* Pricing hidden when showPriceToDriver is false */}
 
         {/* ── Items & Instructions ── */}
         <View style={styles.card}>
@@ -512,79 +480,65 @@ export default function JobDetailScreen({ route, navigation }) {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: "#F4F6FA",
+    backgroundColor: "#F8FAFC",
   },
   headerShell: {
     width: "100%",
-    backgroundColor: "#0B2545",
-    paddingHorizontal: 18,
-    paddingBottom: 22,
-    borderBottomLeftRadius: 28,
-    borderBottomRightRadius: 28,
-    overflow: "hidden",
-  },
-  headerOrbLarge: {
-    position: "absolute",
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    right: -90,
-    top: -90,
-    backgroundColor: "rgba(14, 165, 233, 0.16)",
-  },
-  headerOrbSmall: {
-    position: "absolute",
-    width: 110,
-    height: 110,
-    borderRadius: 55,
-    left: -50,
-    bottom: -45,
-    backgroundColor: "rgba(56, 189, 248, 0.09)",
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E2E8F0",
   },
   headerTopRow: {
     width: "100%",
     flexDirection: "row",
     alignItems: "center",
+    minHeight: 40,
   },
   headerIconButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 15,
-    backgroundColor: "rgba(255,255,255,0.14)",
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: "#F1F5F9",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.18)",
+    borderColor: "#E2E8F0",
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
   },
   headerSidePlaceholder: {
-    width: 44,
-    height: 44,
+    width: 38,
+    height: 38,
     flexShrink: 0,
   },
   headerTitleBlock: {
     flex: 1,
     minWidth: 0,
     marginHorizontal: 12,
-  },
-  headerEyebrow: {
-    color: "rgba(255,255,255,0.70)",
-    fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 1.25,
+    justifyContent: "center",
   },
   headerTitle: {
-    color: "#FFFFFF",
-    fontSize: 25,
-    fontWeight: "900",
-    marginTop: 3,
+    color: "#0F172A",
+    fontSize: 20,
+    fontWeight: "800",
+    lineHeight: 23,
+  },
+  headerEyebrow: {
+    color: "#64748B",
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.8,
+    lineHeight: 13,
+    marginTop: 1,
   },
   headerBottomRow: {
     width: "100%",
     flexDirection: "row",
     alignItems: "flex-end",
     justifyContent: "space-between",
-    marginTop: 24,
+    marginTop: 14,
   },
   referenceBlock: {
     flex: 1,
@@ -592,63 +546,80 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   referenceLabel: {
-    color: "rgba(255,255,255,0.58)",
+    color: "#64748B",
     fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 1.05,
+    fontWeight: "700",
+    letterSpacing: 0.8,
   },
   referenceValue: {
-    color: "#FFFFFF",
-    fontSize: 20,
-    fontWeight: "900",
-    marginTop: 5,
+    color: "#0F172A",
+    fontSize: 18,
+    fontWeight: "800",
+    marginTop: 2,
   },
   headerStatusBadge: {
-    minHeight: 34,
+    minHeight: 32,
     paddingHorizontal: 12,
-    borderRadius: 17,
-    backgroundColor: "rgba(255,255,255,0.14)",
+    borderRadius: 16,
     flexDirection: "row",
     alignItems: "center",
     gap: 7,
     flexShrink: 0,
   },
   headerStatusText: {
-    color: "#FFFFFF",
     fontSize: 11,
     fontWeight: "900",
     textTransform: "uppercase",
     letterSpacing: 0.45,
   },
+  headerStatusTextPending: {
+    color: "#B45309",
+  },
+  headerStatusTextInProgress: {
+    color: "#0369A1",
+  },
+  headerStatusTextCompleted: {
+    color: "#15803D",
+  },
+  headerStatusTextCancelled: {
+    color: "#B91C1C",
+  },
   headerStatusDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: "#CBD5E1",
   },
   headerStatusPending: {
-    backgroundColor: "rgba(245, 158, 11, 0.20)",
+    backgroundColor: "#FEF3C7",
+    borderWidth: 1,
+    borderColor: "#FDE68A",
   },
   headerStatusInProgress: {
-    backgroundColor: "rgba(56, 189, 248, 0.20)",
+    backgroundColor: "#E0F2FE",
+    borderWidth: 1,
+    borderColor: "#BAE6FD",
   },
   headerStatusCompleted: {
-    backgroundColor: "rgba(34, 197, 94, 0.20)",
+    backgroundColor: "#DCFCE7",
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
   },
   headerStatusCancelled: {
-    backgroundColor: "rgba(239, 68, 68, 0.20)",
+    backgroundColor: "#FEE2E2",
+    borderWidth: 1,
+    borderColor: "#FECACA",
   },
   headerStatusDotPending: {
-    backgroundColor: "#F59E0B",
+    backgroundColor: "#D97706",
   },
   headerStatusDotInProgress: {
-    backgroundColor: "#38BDF8",
+    backgroundColor: "#0284C7",
   },
   headerStatusDotCompleted: {
-    backgroundColor: "#22C55E",
+    backgroundColor: "#16A34A",
   },
   headerStatusDotCancelled: {
-    backgroundColor: "#EF4444",
+    backgroundColor: "#DC2626",
   },
   statusBadge: {
     paddingHorizontal: 12,
@@ -695,10 +666,22 @@ const styles = StyleSheet.create({
     padding: 18,
     marginBottom: 14,
     borderWidth: 1,
-    borderColor: "rgba(15, 23, 42, 0.06)",
-    shadowColor: "rgba(15, 23, 42, 0.08)",
+    borderColor: "#E2E8F0",
+    shadowColor: "#0F172A",
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  statusCard: {
+    backgroundColor: "#EAF2FF",
+    borderWidth: 1.5,
+    borderColor: "#BFDBFE",
+    borderLeftWidth: 4.5,
+    borderLeftColor: "#0284C7",
+    shadowColor: "#0284C7",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
     shadowRadius: 10,
     elevation: 3,
   },
@@ -715,24 +698,33 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "#F1F5F9",
+    backgroundColor: "#FFFFFF",
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 12,
     alignSelf: "flex-start",
+    borderWidth: 1,
+    borderColor: "#BAE6FD",
   },
   typeTagText: {
     fontSize: 12,
     fontWeight: "800",
-    color: "#0B2545",
+    color: "#0369A1",
     letterSpacing: 0.5,
   },
   timingGrid: {
     flexDirection: "row",
     justifyContent: "space-between",
-    backgroundColor: "#F8FAFC",
+    backgroundColor: "#FFFFFF",
     borderRadius: 14,
-    padding: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#E0F2FE",
+    shadowColor: "rgba(2, 132, 199, 0.06)",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 1,
   },
   timingItem: {
     flex: 1,
@@ -741,11 +733,13 @@ const styles = StyleSheet.create({
   timingLabel: {
     fontSize: 11,
     color: "#64748B",
-    fontWeight: "600",
-    marginBottom: 2,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 3,
   },
   timingValue: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "800",
     color: "#0F172A",
   },

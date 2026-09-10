@@ -1,4 +1,4 @@
-﻿import React, {
+import React, {
   memo,
   useCallback,
   useEffect,
@@ -13,6 +13,7 @@ import {
   Easing,
   FlatList,
   Image,
+  Platform,
   RefreshControl,
   SafeAreaView,
   StatusBar,
@@ -32,7 +33,9 @@ import {
 
 import AppIcon from "../components/common/AppIcon";
 import LoadingSpinner from "../components/LoadingSpinner";
+import IosDashboardHeader from "../components/IosDashboardHeader";
 import API from "../services/api";
+import { getDriverVisiblePriceInfo } from "../utils/jobHelpers";
 
 const COLORS = {
   navy900: "#061A33",
@@ -198,16 +201,7 @@ const getDateLabel = () => {
 const normaliseJob = (job) => {
   const status = normaliseStatus(job?.status);
   const type = getJobType(job);
-
-  const minimumEstimatedCost =
-    job?.minimumEstimatedCost ??
-    job?.pricing?.minimumEstimatedCost ??
-    null;
-
-  const finalCost =
-    job?.finalCost ??
-    job?.pricing?.finalCost ??
-    null;
+  const priceInfo = getDriverVisiblePriceInfo(job);
 
   return {
     raw: job,
@@ -237,12 +231,11 @@ const normaliseJob = (job) => {
       "Drop-off address not available",
     time: formatScheduledTime(job),
     type,
-    displayCost:
-      type.isMoving
-        ? status === "completed"
-          ? safeCurrency(finalCost)
-          : safeCurrency(minimumEstimatedCost)
-        : null,
+    showPriceToDriver: priceInfo.showPriceToDriver,
+    driverPrice: priceInfo.driverPrice,
+    driverPriceType: priceInfo.driverPriceType,
+    displayCost: priceInfo.formattedPrice,
+    canShowPrice: priceInfo.canShowPrice,
   };
 };
 
@@ -420,33 +413,18 @@ const JobCard = memo(({ job, onPress }) => {
       <View style={styles.jobFooter}>
         {job.displayCost ? (
           <View style={styles.costBlock}>
-            <Text style={styles.costLabel}>
-              {job.status === "completed"
-                ? "Final Cost"
-                : "Minimum Est. Cost"}
-            </Text>
-            <Text style={styles.costValue}>
-              {job.displayCost}
-            </Text>
+            <Text style={styles.costLabel}>Driver Price</Text>
+            <Text style={styles.costValue}>{job.displayCost}</Text>
           </View>
-        ) : (
-          <View style={styles.deliveryMeta}>
-            <AppIcon
-              library="MaterialCommunityIcons"
-              name="package-variant-closed"
-              size={moderateScale(17)}
-              color={COLORS.muted}
-            />
-            <Text style={styles.deliveryMetaText}>
-              Delivery job
-            </Text>
-          </View>
-        )}
+        ) : null}
 
-        <View style={styles.detailsAction}>
-          <Text style={styles.detailsActionText}>
-            View details
-          </Text>
+        <View
+          style={[
+            styles.detailsAction,
+            !job.displayCost && { marginLeft: "auto" },
+          ]}
+        >
+          <Text style={styles.detailsActionText}>View details</Text>
           <AppIcon
             library="Feather"
             name="arrow-up-right"
@@ -487,110 +465,116 @@ const DashboardHeader = memo(
     onOpenNotifications,
     onViewAll,
   }) => {
-    const heroOpacity = useRef(new Animated.Value(0)).current;
-    const truckTranslateX = useRef(new Animated.Value(44)).current;
+    const insets = useSafeAreaInsets();
+    const displayName =
+      profile?.name ??
+      profile?.fullName ??
+      profile?.firstName ??
+      "Driver";
 
-    useEffect(() => {
-      Animated.parallel([
-        Animated.timing(heroOpacity, {
-          toValue: 1,
-          duration: 700,
-          useNativeDriver: true,
-        }),
-        Animated.timing(truckTranslateX, {
-          toValue: 0,
-          duration: 900,
-          delay: 120,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-      ]).start();
-    }, [heroOpacity, truckTranslateX]);
+    const firstName = String(displayName).trim().split(" ")[0] || "Driver";
+    const initial = firstName.charAt(0).toUpperCase();
+
+    const topInset = Platform.OS === "ios"
+      ? Math.max(insets.top, 44) + 6
+      : (StatusBar.currentHeight || 12) + 8;
 
     return (
-      <View>
-        <Animated.View style={[styles.heroShell, { opacity: heroOpacity }]}> 
-          <LinearGradient
-            colors={["#072D59", "#0F4C81", "#19A7FF"]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.hero}
-          >
-            <View style={styles.heroGlowOne} />
-            <View style={styles.heroGlowTwo} />
+      <View style={styles.dashboardHeaderContainer}>
+        <LinearGradient
+          colors={[COLORS.navy900, "#0B3564", "#135491"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[styles.hero, { paddingTop: topInset }]}
+        >
+          <View style={styles.heroGlowOne} pointerEvents="none" />
+          <View style={styles.heroGlowTwo} pointerEvents="none" />
 
-            <View style={styles.heroTopRow}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>
-                  {profile?.name?.charAt(0)?.toUpperCase() || "D"}
-                </Text>
-              </View>
-
-              <View style={styles.brand}>
-                <View style={styles.brandIcon}>
-                  <AppIcon
-                    library="MaterialCommunityIcons"
-                    name="truck-fast-outline"
-                    size={moderateScale(20)}
-                    color={COLORS.cyan400}
-                  />
-                </View>
-                <Text style={styles.brandMain}>DELIVERY</Text>
-                <Text style={styles.brandPlus}>PLUS</Text>
-              </View>
-
-              <TouchableOpacity
-                style={styles.notificationButton}
-                onPress={onOpenNotifications}
-                activeOpacity={0.85}
-                accessibilityRole="button"
-                accessibilityLabel="Open notifications"
-              >
+          <View style={styles.heroTopRow}>
+            <View style={styles.brandWrap}>
+              <View style={styles.brandMark}>
                 <AppIcon
-                  library="Ionicons"
-                  name="notifications-outline"
-                  size={moderateScale(22)}
+                  library="MaterialCommunityIcons"
+                  name="truck-fast-outline"
+                  size={20}
                   color={COLORS.white}
                 />
-
-                {unreadCount > 0 ? (
-                  <View style={styles.notificationBadge}>
-                    <Text style={styles.notificationBadgeText}>
-                      {unreadCount > 99 ? "99+" : unreadCount}
-                    </Text>
-                  </View>
-                ) : null}
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.heroContent}>
-              <View style={styles.greetingBlock}>
-                <Text style={styles.greetingText}>
-                  {getGreeting()}
+              </View>
+              <View style={styles.brandCopy}>
+                <Text style={styles.brandText} numberOfLines={1}>
+                  DELIVERY PLUS
                 </Text>
-                <Text style={styles.profileName} numberOfLines={1}>
-                  {profile?.name || "Driver"}
-                </Text>
-                <Text style={styles.heroSubtitle} numberOfLines={2}>
-                  {getDateLabel()}
-                </Text>
-                <Text style={styles.heroMeta} numberOfLines={1}>
-                  Sydney, NSW
+                <Text style={styles.brandCaption} numberOfLines={1}>
+                  DRIVER DASHBOARD
                 </Text>
               </View>
-
-              <Animated.Image
-                source={require("../assets/images/dashboardtruck_image-Photoroom.png")}
-                style={[
-                  styles.heroTruck,
-                  { transform: [{ translateX: truckTranslateX }] },
-                ]}
-                resizeMode="contain"
-              />
-
             </View>
-          </LinearGradient>
-        </Animated.View>
+
+            <TouchableOpacity
+              style={styles.notificationButton}
+              onPress={onOpenNotifications}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Notifications"
+            >
+              <AppIcon
+                library="Feather"
+                name="bell"
+                size={19}
+                color={COLORS.white}
+              />
+              {unreadCount > 0 ? (
+                <View style={styles.notificationBadge}>
+                  <Text style={styles.notificationBadgeText}>
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </Text>
+                </View>
+              ) : null}
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.heroMainRow}>
+            <View style={styles.greetingBlock}>
+              <Text style={styles.greetingText}>{getGreeting()}</Text>
+              <Text style={styles.profileName} numberOfLines={1}>
+                {firstName}
+              </Text>
+              <View style={styles.datePill}>
+                <AppIcon
+                  library="Feather"
+                  name="calendar"
+                  size={11}
+                  color={COLORS.cyan400}
+                />
+                <Text style={styles.datePillText}>{getDateLabel()}</Text>
+              </View>
+            </View>
+
+            <View style={styles.profileOrbWrap}>
+              <View style={styles.profileOrbOuter}>
+                <View style={styles.profileOrbInner}>
+                  <Text style={styles.profileOrbText}>{initial}</Text>
+                </View>
+              </View>
+              <View
+                style={[
+                  styles.heroStatusPill,
+                  !isOnline && styles.heroStatusPillOffline,
+                ]}
+              >
+                <View
+                  style={[
+                    styles.heroStatusDot,
+                    !isOnline && styles.heroStatusDotOffline,
+                  ]}
+                />
+                <Text style={styles.heroStatusText}>
+                  {isOnline ? "ONLINE" : "OFFLINE"}
+                </Text>
+              </View>
+            </View>
+          </View>
+        </LinearGradient>
 
         <View style={styles.statsContainer}>
           <View style={styles.statStrip}>
@@ -599,27 +583,23 @@ const DashboardHeader = memo(
               value={stats.assigned}
               label="Assigned"
               accent={COLORS.orange500}
-              backgroundColor="#FFF3DE"
+              backgroundColor="#FFF5E5"
             />
-
             <View style={styles.statSeparator} />
-
             <StatCard
               icon="truck-fast-outline"
               value={stats.inProgress}
               label="In Progress"
               accent={COLORS.blue500}
-              backgroundColor="#E5F2FF"
+              backgroundColor="#EAF4FF"
             />
-
             <View style={styles.statSeparator} />
-
             <StatCard
               icon="check-decagram-outline"
               value={stats.completed}
               label="Completed"
               accent={COLORS.green500}
-              backgroundColor="#E7F9F1"
+              backgroundColor="#EAF9F2"
             />
           </View>
         </View>
@@ -640,30 +620,23 @@ const DashboardHeader = memo(
               >
                 <AppIcon
                   library="MaterialCommunityIcons"
-                  name={
-                    isOnline
-                      ? "account-check-outline"
-                      : "account-off-outline"
-                  }
-                  size={moderateScale(23)}
-                  color={
-                    isOnline
-                      ? COLORS.green500
-                      : COLORS.subtle
-                  }
+                  name={isOnline ? "radio-tower" : "power-standby"}
+                  size={20}
+                  color={isOnline ? COLORS.green500 : COLORS.subtle}
                 />
               </View>
 
               <View style={styles.onlineTextBlock}>
-                <Text style={styles.onlineTitle}>
-                  {isOnline
-                    ? "You’re online"
-                    : "You’re offline"}
-                </Text>
+                <View style={styles.onlineTitleRow}>
+                  <Text style={styles.onlineTitle}>
+                    {isOnline ? "Available for jobs" : "Currently offline"}
+                  </Text>
+                  {isOnline ? <View style={styles.liveDot} /> : null}
+                </View>
                 <Text style={styles.onlineSubtitle}>
                   {isOnline
-                    ? "Ready to receive new jobs"
-                    : "Go online to receive assignments"}
+                    ? "Receiving nearby job assignments"
+                    : "Turn availability on when ready"}
                 </Text>
               </View>
             </View>
@@ -672,8 +645,7 @@ const DashboardHeader = memo(
               style={[
                 styles.toggleTrack,
                 isOnline && styles.toggleTrackActive,
-                togglingStatus &&
-                  styles.toggleTrackLoading,
+                togglingStatus && styles.toggleTrackLoading,
               ]}
               onPress={onToggleOnline}
               activeOpacity={0.85}
@@ -682,16 +654,12 @@ const DashboardHeader = memo(
               accessibilityState={{ checked: isOnline }}
             >
               {togglingStatus ? (
-                <ActivityIndicator
-                  size="small"
-                  color={COLORS.white}
-                />
+                <ActivityIndicator size="small" color={COLORS.white} />
               ) : (
                 <View
                   style={[
                     styles.toggleThumb,
-                    isOnline &&
-                      styles.toggleThumbActive,
+                    isOnline && styles.toggleThumbActive,
                   ]}
                 />
               )}
@@ -701,12 +669,8 @@ const DashboardHeader = memo(
 
         <View style={styles.sectionHeader}>
           <View>
-            <Text style={styles.sectionEyebrow}>
-              YOUR SCHEDULE
-            </Text>
-            <Text style={styles.sectionTitle}>
-              Today’s Jobs
-            </Text>
+            <Text style={styles.sectionEyebrow}>TODAY'S SCHEDULE</Text>
+            <Text style={styles.sectionTitle}>Your Jobs</Text>
           </View>
 
           <TouchableOpacity
@@ -718,7 +682,7 @@ const DashboardHeader = memo(
             <AppIcon
               library="Feather"
               name="arrow-right"
-              size={moderateScale(16)}
+              size={14}
               color={COLORS.blue500}
             />
           </TouchableOpacity>
@@ -838,8 +802,8 @@ const HomeScreen = ({ navigation }) => {
         setProfile(profileData);
         setIsOnline(
           profileData?.isOnline ??
-            profileData?.online ??
-            profileData?.availability !== "offline"
+          profileData?.online ??
+          profileData?.availability !== "offline"
         );
         setJobs(homeJobs);
         setStats({
@@ -850,9 +814,9 @@ const HomeScreen = ({ navigation }) => {
         setUnreadCount(
           Number(
             notificationsResponse?.unreadCount ??
-              notificationsResponse?.data
-                ?.unreadCount ??
-              0
+            notificationsResponse?.data
+              ?.unreadCount ??
+            0
           ) || 0
         );
       } catch (error) {
@@ -860,7 +824,7 @@ const HomeScreen = ({ navigation }) => {
 
         showToast(
           error?.response?.data?.message ??
-            "Unable to load your dashboard.",
+          "Unable to load your dashboard.",
           "error"
         );
       } finally {
@@ -934,8 +898,8 @@ const HomeScreen = ({ navigation }) => {
         ) {
           throw new Error(
             response?.message ??
-              response?.data?.message ??
-              "Unable to update availability."
+            response?.data?.message ??
+            "Unable to update availability."
           );
         }
 
@@ -948,8 +912,8 @@ const HomeScreen = ({ navigation }) => {
       } catch (error) {
         showToast(
           error?.response?.data?.message ??
-            error?.message ??
-            "Unable to update availability.",
+          error?.message ??
+          "Unable to update availability.",
           "error"
         );
       } finally {
@@ -974,22 +938,42 @@ const HomeScreen = ({ navigation }) => {
   );
 
   const listHeader = useMemo(
-    () => (
-      <DashboardHeader
-        profile={profile}
-        stats={stats}
-        isOnline={isOnline}
-        togglingStatus={togglingStatus}
-        unreadCount={unreadCount}
-        onToggleOnline={handleToggleOnline}
-        onOpenNotifications={() =>
-          navigation.navigate("Notifications")
-        }
-        onViewAll={() =>
-          navigation.navigate("JobsTab")
-        }
-      />
-    ),
+    () => {
+      if (Platform.OS === "ios") {
+        return (
+          <IosDashboardHeader
+            profile={profile}
+            stats={stats}
+            isOnline={isOnline}
+            togglingStatus={togglingStatus}
+            unreadCount={unreadCount}
+            onToggleOnline={handleToggleOnline}
+            onOpenNotifications={() =>
+              navigation.navigate("Notifications")
+            }
+            onViewAll={() =>
+              navigation.navigate("JobsTab")
+            }
+          />
+        );
+      }
+      return (
+        <DashboardHeader
+          profile={profile}
+          stats={stats}
+          isOnline={isOnline}
+          togglingStatus={togglingStatus}
+          unreadCount={unreadCount}
+          onToggleOnline={handleToggleOnline}
+          onOpenNotifications={() =>
+            navigation.navigate("Notifications")
+          }
+          onViewAll={() =>
+            navigation.navigate("JobsTab")
+          }
+        />
+      );
+    },
     [
       handleToggleOnline,
       isOnline,
@@ -1021,10 +1005,11 @@ const HomeScreen = ({ navigation }) => {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <View style={styles.safeArea}>
       <StatusBar
-        barStyle="light-content"
-        backgroundColor={COLORS.navy900}
+        barStyle={Platform.OS === "ios" ? "dark-content" : "light-content"}
+        backgroundColor={Platform.OS === "ios" ? COLORS.background : COLORS.navy900}
+        translucent={Platform.OS === "android"}
       />
 
       {toast.visible ? (
@@ -1082,7 +1067,7 @@ const HomeScreen = ({ navigation }) => {
           />
         }
       />
-    </SafeAreaView>
+    </View>
   );
 };
 
@@ -1091,230 +1076,285 @@ export default HomeScreen;
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: COLORS.background,
+    backgroundColor: Platform.OS === "ios" ? COLORS.background : COLORS.navy900,
   },
   listContent: {
     flexGrow: 1,
+    backgroundColor: COLORS.background,
   },
 
-  heroShell: {
-    marginHorizontal: 0,
+  dashboardHeaderContainer: {
+    width: "100%",
+    backgroundColor: COLORS.background,
   },
   hero: {
     width: "100%",
-    minHeight: 300,
+    paddingHorizontal: scale(18),
+    paddingBottom: verticalScale(22),
+    borderBottomLeftRadius: moderateScale(24),
+    borderBottomRightRadius: moderateScale(24),
     overflow: "hidden",
-    paddingHorizontal: 20,
-    paddingTop: 22,
-    paddingBottom: 24,
-    borderRadius: 30,
   },
   heroGlowOne: {
     position: "absolute",
-    width: 190,
-    height: 190,
-    borderRadius: 95,
-    backgroundColor: "rgba(255,255,255,0.09)",
-    top: -80,
-    right: -60,
+    width: scale(180),
+    height: scale(180),
+    borderRadius: scale(90),
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+    top: verticalScale(-60),
+    right: scale(-50),
   },
   heroGlowTwo: {
     position: "absolute",
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    backgroundColor: "rgba(25,167,255,0.18)",
-    bottom: -55,
-    left: -35,
+    width: scale(140),
+    height: scale(140),
+    borderRadius: scale(70),
+    backgroundColor: "rgba(62, 201, 245, 0.12)",
+    bottom: verticalScale(-50),
+    left: scale(-30),
   },
   heroTopRow: {
     width: "100%",
-    zIndex: 10,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingRight: 40,
+    zIndex: 10,
   },
-  avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.16)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.22)",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  avatarText: {
-    color: COLORS.white,
-    fontWeight: "900",
-    fontSize: moderateScale(18),
-  },
-  brand: {
+  brandWrap: {
     flex: 1,
-    marginHorizontal: 10,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    paddingRight: scale(10),
   },
-  brandIcon: {
-    marginRight: 6,
-  },
-  brandMain: {
-    color: COLORS.white,
-    fontSize: moderateScale(16),
-    fontWeight: "900",
-    letterSpacing: 1.8,
-  },
-  brandPlus: {
-    color: COLORS.cyan400,
-    fontSize: moderateScale(16),
-    fontWeight: "900",
-    letterSpacing: 1.8,
-    marginLeft: 6,
-  },
-  notificationButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: "rgba(255,255,255,0.16)",
+  brandMark: {
+    width: moderateScale(38),
+    height: moderateScale(38),
+    borderRadius: moderateScale(12),
+    backgroundColor: "rgba(255, 255, 255, 0.14)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.22)",
+    borderColor: "rgba(255, 255, 255, 0.22)",
     alignItems: "center",
     justifyContent: "center",
+    marginRight: scale(10),
     flexShrink: 0,
+  },
+  brandCopy: {
+    flex: 1,
+  },
+  brandText: {
+    color: COLORS.white,
+    fontSize: moderateScale(13),
+    fontWeight: "900",
+    letterSpacing: 1.1,
+  },
+  brandCaption: {
+    color: COLORS.cyan400,
+    fontSize: moderateScale(8.5),
+    fontWeight: "800",
+    letterSpacing: 1.3,
+    marginTop: verticalScale(1),
+  },
+  notificationButton: {
+    width: moderateScale(40),
+    height: moderateScale(40),
+    borderRadius: moderateScale(13),
+    backgroundColor: "rgba(255, 255, 255, 0.14)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.20)",
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
   },
   notificationBadge: {
     position: "absolute",
-    top: -4,
-    right: -3,
-    minWidth: 19,
-    height: 19,
-    paddingHorizontal: 4,
-    borderRadius: 9.5,
+    top: -verticalScale(4),
+    right: -scale(4),
+    minWidth: moderateScale(18),
+    height: moderateScale(18),
+    paddingHorizontal: scale(4),
+    borderRadius: moderateScale(9),
     backgroundColor: COLORS.red500,
     borderWidth: 2,
-    borderColor: "#0F4C81",
+    borderColor: COLORS.navy900,
     alignItems: "center",
     justifyContent: "center",
+    zIndex: 15,
   },
   notificationBadgeText: {
     color: COLORS.white,
-    fontSize: 9,
+    fontSize: moderateScale(8),
     fontWeight: "900",
   },
-  heroContent: {
-    flex: 1,
+  heroMainRow: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
     justifyContent: "space-between",
-    marginTop: 18,
-    paddingBottom: 4,
+    marginTop: verticalScale(16),
+    zIndex: 2,
   },
   greetingBlock: {
-    zIndex: 5,
-    width: "58%",
+    flex: 1,
+    paddingRight: scale(12),
   },
   greetingText: {
-    color: "rgba(255,255,255,0.8)",
-    fontSize: 18,
+    color: "rgba(255, 255, 255, 0.75)",
+    fontSize: moderateScale(12.5),
     fontWeight: "600",
   },
   profileName: {
     color: COLORS.white,
-    fontSize: 42,
+    fontSize: moderateScale(23),
+    lineHeight: moderateScale(28),
     fontWeight: "900",
-    marginTop: 4,
+    marginTop: verticalScale(2),
+    letterSpacing: -0.3,
   },
-  heroSubtitle: {
-    color: "rgba(255,255,255,0.72)",
-    fontSize: 15,
-    lineHeight: 21,
-    marginTop: 6,
-    maxWidth: "100%",
+  datePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: verticalScale(6),
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(255, 255, 255, 0.10)",
+    paddingHorizontal: scale(8),
+    paddingVertical: verticalScale(3),
+    borderRadius: moderateScale(8),
   },
-  heroMeta: {
-    color: "rgba(255,255,255,0.62)",
-    fontSize: 13,
-    marginTop: 4,
+  datePillText: {
+    color: COLORS.cyan400,
+    fontSize: moderateScale(10),
+    fontWeight: "700",
+    marginLeft: scale(5),
   },
-  heroTruck: {
-    position: "absolute",
-    width: "48%",
-    minWidth: 200,
-    maxWidth: 300,
-    height: 210,
-    right: -30,
-    bottom: -10,
+  profileOrbWrap: {
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
   },
+  profileOrbOuter: {
+    width: moderateScale(52),
+    height: moderateScale(52),
+    borderRadius: moderateScale(18),
+    backgroundColor: "rgba(255, 255, 255, 0.10)",
+    borderWidth: 1.5,
+    borderColor: "rgba(255, 255, 255, 0.22)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  profileOrbInner: {
+    width: moderateScale(40),
+    height: moderateScale(40),
+    borderRadius: moderateScale(14),
+    backgroundColor: "rgba(255, 255, 255, 0.20)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  profileOrbText: {
+    color: COLORS.white,
+    fontSize: moderateScale(19),
+    fontWeight: "900",
+  },
+  heroStatusPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: verticalScale(6),
+    paddingHorizontal: scale(7),
+    paddingVertical: verticalScale(3),
+    borderRadius: moderateScale(8),
+    backgroundColor: "rgba(48, 200, 138, 0.18)",
+  },
+  heroStatusPillOffline: {
+    backgroundColor: "rgba(255, 255, 255, 0.12)",
+  },
+  heroStatusDot: {
+    width: moderateScale(5),
+    height: moderateScale(5),
+    borderRadius: moderateScale(2.5),
+    backgroundColor: COLORS.green500,
+    marginRight: scale(4),
+  },
+  heroStatusDotOffline: {
+    backgroundColor: COLORS.subtle,
+  },
+  heroStatusText: {
+    color: COLORS.white,
+    fontSize: moderateScale(8.5),
+    fontWeight: "900",
+    letterSpacing: 0.6,
+  },
+
   statsContainer: {
     marginHorizontal: 16,
-    marginTop: 14,
+    marginTop: 12,
   },
   statStrip: {
-    minHeight: 104,
-    borderRadius: 24,
+    minHeight: verticalScale(92),
+    borderRadius: moderateScale(22),
     backgroundColor: COLORS.surface,
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 10,
-    paddingVertical: 12,
-    shadowColor: "#102A4B",
-    shadowOffset: {
-      width: 0,
-      height: 10,
-    },
-    shadowOpacity: 0.12,
-    shadowRadius: 22,
-    elevation: 8,
+    paddingHorizontal: scale(8),
+    paddingVertical: verticalScale(10),
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: "#12345A",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
+    elevation: 4,
   },
   statCard: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   statIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 15,
+    width: moderateScale(36),
+    height: moderateScale(36),
+    borderRadius: moderateScale(12),
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   statValue: {
     color: COLORS.text,
-    fontSize: 22,
+    fontSize: moderateScale(18),
     fontWeight: "900",
-    marginTop: 4,
+    marginTop: verticalScale(4),
   },
   statLabel: {
     color: COLORS.muted,
-    fontSize: 9.5,
-    fontWeight: "800",
+    fontSize: moderateScale(8),
+    fontWeight: "900",
     textTransform: "uppercase",
-    letterSpacing: 0.65,
-    marginTop: 1,
+    letterSpacing: 0.55,
+    marginTop: verticalScale(1),
   },
   statSeparator: {
     width: 1,
-    height: 60,
+    height: verticalScale(47),
     backgroundColor: COLORS.border,
   },
 
   onlineCardWrap: {
     marginHorizontal: 16,
-    marginTop: 18,
+    marginTop: 14,
   },
   onlineCard: {
-    minHeight: 82,
-    borderRadius: 22,
-    backgroundColor: "#083563",
+    minHeight: verticalScale(72),
+    borderRadius: moderateScale(20),
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: "#DDE9F5",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 13,
+    paddingHorizontal: scale(13),
+    paddingVertical: verticalScale(11),
   },
   onlineCardOffline: {
-    backgroundColor: "#223349",
+    backgroundColor: "#FAFBFD",
   },
   onlineInfo: {
     flex: 1,
@@ -1322,37 +1362,49 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   onlineIconCircle: {
-    width: moderateScale(48),
-    height: moderateScale(48),
-    borderRadius: moderateScale(24),
-    backgroundColor: "rgba(48,200,138,0.15)",
+    width: moderateScale(42),
+    height: moderateScale(42),
+    borderRadius: moderateScale(14),
+    backgroundColor: "#EAF9F2",
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   onlineIconCircleOffline: {
-    backgroundColor: "rgba(165,176,194,0.12)",
+    backgroundColor: "#F0F3F7",
   },
   onlineTextBlock: {
     flex: 1,
-    marginLeft: 12,
-    marginRight: 10,
+    marginLeft: scale(10),
+    marginRight: scale(8),
+  },
+  onlineTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
   },
   onlineTitle: {
-    color: COLORS.white,
-    fontSize: moderateScale(15),
-    fontWeight: "800",
+    color: COLORS.text,
+    fontSize: moderateScale(13),
+    fontWeight: "900",
+  },
+  liveDot: {
+    width: moderateScale(6),
+    height: moderateScale(6),
+    borderRadius: moderateScale(3),
+    backgroundColor: COLORS.green500,
+    marginLeft: scale(6),
   },
   onlineSubtitle: {
-    color: "rgba(255,255,255,0.58)",
-    fontSize: moderateScale(10.5),
-    lineHeight: moderateScale(15),
+    color: COLORS.muted,
+    fontSize: moderateScale(9.5),
+    lineHeight: moderateScale(13.5),
     marginTop: verticalScale(2),
   },
   toggleTrack: {
-    width: moderateScale(54),
-    height: moderateScale(31),
-    borderRadius: moderateScale(16),
-    backgroundColor: "#56667B",
+    width: moderateScale(50),
+    height: moderateScale(29),
+    borderRadius: moderateScale(15),
+    backgroundColor: "#C8D0DC",
     padding: moderateScale(3),
     justifyContent: "center",
   },
@@ -1363,82 +1415,80 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   toggleThumb: {
-    width: moderateScale(25),
-    height: moderateScale(25),
-    borderRadius: moderateScale(13),
+    width: moderateScale(23),
+    height: moderateScale(23),
+    borderRadius: moderateScale(12),
     backgroundColor: COLORS.white,
     alignSelf: "flex-start",
     shadowColor: "#000",
-    shadowOpacity: 0.16,
-    shadowRadius: 3,
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
+    shadowOpacity: 0.12,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 2,
   },
   toggleThumbActive: {
     alignSelf: "flex-end",
   },
 
   sectionHeader: {
-    paddingHorizontal: 18,
-    marginTop: 24,
-    marginBottom: 12,
+    paddingHorizontal: scale(16),
+    marginTop: verticalScale(20),
+    marginBottom: verticalScale(10),
     flexDirection: "row",
     alignItems: "flex-end",
     justifyContent: "space-between",
   },
   sectionEyebrow: {
     color: COLORS.blue500,
-    fontSize: moderateScale(9.5),
+    fontSize: moderateScale(8),
     fontWeight: "900",
-    letterSpacing: 1.4,
+    letterSpacing: 1.2,
   },
   sectionTitle: {
     color: COLORS.text,
-    fontSize: moderateScale(23),
+    fontSize: moderateScale(20),
     fontWeight: "900",
-    marginTop: verticalScale(3),
+    marginTop: verticalScale(2),
   },
   viewAllButton: {
-    height: 40,
-    paddingHorizontal: 14,
-    borderRadius: 14,
-    backgroundColor: "#E7F2FF",
+    minHeight: verticalScale(34),
+    paddingHorizontal: scale(11),
+    borderRadius: moderateScale(12),
+    backgroundColor: "#EAF4FF",
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
   },
   viewAllText: {
     color: COLORS.blue500,
-    fontSize: moderateScale(12.5),
-    fontWeight: "800",
+    fontSize: moderateScale(10.5),
+    fontWeight: "900",
+    marginRight: scale(5),
   },
 
   cardSeparator: {
-    height: verticalScale(14),
+    height: verticalScale(11),
   },
   jobCard: {
-    marginHorizontal: 16,
-    borderRadius: 24,
+    marginHorizontal: scale(14),
+    borderRadius: moderateScale(21),
     backgroundColor: COLORS.surface,
-    padding: 17,
+    paddingHorizontal: scale(14),
+    paddingVertical: verticalScale(14),
     overflow: "hidden",
-    shadowColor: "#163659",
-    shadowOffset: {
-      width: 0,
-      height: 7,
-    },
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    elevation: 5,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: "#17385D",
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    elevation: 3,
   },
   jobCardAccent: {
     position: "absolute",
     left: 0,
-    top: verticalScale(23),
-    bottom: verticalScale(23),
-    width: moderateScale(4),
+    top: verticalScale(16),
+    bottom: verticalScale(16),
+    width: moderateScale(3),
     borderTopRightRadius: moderateScale(4),
     borderBottomRightRadius: moderateScale(4),
     backgroundColor: COLORS.blue500,
@@ -1447,235 +1497,244 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    gap: 10,
   },
   jobReferenceBlock: {
     flex: 1,
+    minWidth: 0,
+    paddingRight: scale(8),
   },
   jobReference: {
     color: COLORS.orange500,
-    fontSize: moderateScale(17),
+    fontSize: moderateScale(14),
     fontWeight: "900",
-    letterSpacing: 0.15,
+    letterSpacing: 0.1,
   },
   timeRow: {
-    marginTop: verticalScale(5),
+    marginTop: verticalScale(4),
     flexDirection: "row",
     alignItems: "center",
-    gap: scale(6),
   },
   jobTime: {
     color: COLORS.text,
-    fontSize: moderateScale(15),
-    fontWeight: "700",
+    fontSize: moderateScale(12.5),
+    fontWeight: "800",
+    marginLeft: scale(5),
   },
   statusBadge: {
-    minHeight: 34,
-    paddingHorizontal: 11,
-    borderRadius: 17,
+    minHeight: verticalScale(28),
+    paddingHorizontal: scale(8),
+    borderRadius: moderateScale(11),
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
     flexShrink: 0,
   },
   statusText: {
-    fontSize: moderateScale(10.5),
+    fontSize: moderateScale(8.5),
     fontWeight: "900",
     textTransform: "uppercase",
-    letterSpacing: 0.55,
+    letterSpacing: 0.45,
+    marginLeft: scale(4),
   },
   jobDivider: {
     height: 1,
     backgroundColor: COLORS.border,
-    marginVertical: verticalScale(14),
+    marginVertical: verticalScale(11),
   },
   customerRow: {
     flexDirection: "row",
     alignItems: "center",
   },
   customerAvatar: {
-    width: moderateScale(45),
-    height: moderateScale(45),
-    borderRadius: moderateScale(16),
+    width: moderateScale(40),
+    height: moderateScale(40),
+    borderRadius: moderateScale(13),
     backgroundColor: "#EAF3FF",
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   customerAvatarText: {
     color: COLORS.blue500,
-    fontSize: moderateScale(18),
+    fontSize: moderateScale(16),
     fontWeight: "900",
   },
   customerContent: {
     flex: 1,
-    marginLeft: scale(11),
+    marginLeft: scale(9),
   },
   customerName: {
     color: COLORS.text,
-    fontSize: moderateScale(19),
+    fontSize: moderateScale(15),
     fontWeight: "900",
   },
   typePill: {
     alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
-    gap: scale(5),
-    marginTop: verticalScale(5),
-    paddingHorizontal: scale(8),
-    paddingVertical: verticalScale(4),
-    borderRadius: moderateScale(9),
-    backgroundColor: "#EAF3FF",
+    marginTop: verticalScale(4),
+    paddingHorizontal: scale(7),
+    paddingVertical: verticalScale(3),
+    borderRadius: moderateScale(8),
+    backgroundColor: "#EEF6FF",
   },
   typePillText: {
     color: COLORS.blue500,
-    fontSize: moderateScale(9.5),
+    fontSize: moderateScale(8),
     fontWeight: "900",
-    letterSpacing: 0.7,
+    letterSpacing: 0.55,
+    marginLeft: scale(4),
   },
 
   routeWrap: {
     flexDirection: "row",
-    marginTop: verticalScale(18),
+    marginTop: verticalScale(14),
+    padding: moderateScale(11),
+    borderRadius: moderateScale(15),
+    backgroundColor: "#F8FAFD",
   },
   routeRail: {
-    width: moderateScale(20),
+    width: moderateScale(18),
     alignItems: "center",
-    paddingVertical: verticalScale(5),
+    paddingVertical: verticalScale(3),
   },
   pickupDot: {
-    width: moderateScale(11),
-    height: moderateScale(11),
-    borderRadius: moderateScale(6),
-    backgroundColor: COLORS.orange500,
+    width: moderateScale(9),
+    height: moderateScale(9),
+    borderRadius: moderateScale(5),
+    backgroundColor: COLORS.green500,
   },
   routeLine: {
-    width: moderateScale(2),
-    height: verticalScale(35),
-    backgroundColor: "#DDE4EE",
-    marginVertical: verticalScale(5),
+    width: moderateScale(1.5),
+    height: verticalScale(28),
+    backgroundColor: "#D6DFEB",
+    marginVertical: verticalScale(4),
   },
   dropoffDot: {
-    width: moderateScale(11),
-    height: moderateScale(11),
-    borderRadius: moderateScale(6),
+    width: moderateScale(9),
+    height: moderateScale(9),
+    borderRadius: moderateScale(5),
     backgroundColor: COLORS.red500,
   },
   routeContent: {
     flex: 1,
-    marginLeft: scale(7),
+    marginLeft: scale(6),
   },
   routeLabel: {
     color: COLORS.subtle,
-    fontSize: moderateScale(9.5),
+    fontSize: moderateScale(7.5),
     fontWeight: "900",
-    letterSpacing: 1.1,
+    letterSpacing: 1,
   },
   routeAddress: {
     color: COLORS.text,
-    fontSize: moderateScale(14),
+    fontSize: moderateScale(11.5),
     fontWeight: "700",
-    lineHeight: moderateScale(19),
-    marginTop: verticalScale(2),
+    lineHeight: moderateScale(16),
+    marginTop: verticalScale(1),
   },
   routeGap: {
-    height: verticalScale(15),
+    height: verticalScale(10),
   },
 
   jobFooter: {
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
-    marginTop: verticalScale(17),
-    paddingTop: verticalScale(14),
+    marginTop: verticalScale(12),
+    paddingTop: verticalScale(11),
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
   costBlock: {
     flex: 1,
+    paddingRight: scale(8),
   },
   costLabel: {
     color: COLORS.muted,
-    fontSize: moderateScale(10.5),
+    fontSize: moderateScale(8.5),
     fontWeight: "700",
   },
   costValue: {
     color: "#168B54",
-    fontSize: moderateScale(18),
+    fontSize: moderateScale(15),
     fontWeight: "900",
-    marginTop: verticalScale(2),
+    marginTop: verticalScale(1),
   },
   deliveryMeta: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    gap: scale(7),
   },
   deliveryMetaText: {
     color: COLORS.muted,
-    fontSize: moderateScale(11.5),
+    fontSize: moderateScale(9.5),
     fontWeight: "700",
+    marginLeft: scale(5),
   },
   detailsAction: {
+    minHeight: verticalScale(32),
+    paddingHorizontal: scale(9),
+    borderRadius: moderateScale(10),
+    backgroundColor: "#F0F7FF",
     flexDirection: "row",
     alignItems: "center",
-    gap: scale(5),
   },
   detailsActionText: {
     color: COLORS.blue500,
-    fontSize: moderateScale(12.5),
+    fontSize: moderateScale(9.5),
     fontWeight: "900",
+    marginRight: scale(4),
   },
 
   emptyCard: {
-    marginHorizontal: scale(18),
-    minHeight: verticalScale(220),
-    borderRadius: moderateScale(24),
+    marginHorizontal: scale(14),
+    minHeight: verticalScale(190),
+    borderRadius: moderateScale(21),
     backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: scale(35),
+    paddingHorizontal: scale(30),
   },
   emptyIcon: {
-    width: moderateScale(84),
-    height: moderateScale(84),
-    borderRadius: moderateScale(30),
+    width: moderateScale(70),
+    height: moderateScale(70),
+    borderRadius: moderateScale(23),
     backgroundColor: "#EAF3FF",
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   emptyTitle: {
     color: COLORS.text,
-    fontSize: moderateScale(20),
+    fontSize: moderateScale(17),
     fontWeight: "900",
-    marginTop: verticalScale(17),
+    marginTop: verticalScale(13),
   },
   emptySubtitle: {
     color: COLORS.muted,
-    fontSize: moderateScale(12.5),
-    lineHeight: moderateScale(18),
+    fontSize: moderateScale(10.5),
+    lineHeight: moderateScale(15),
     textAlign: "center",
-    marginTop: verticalScale(6),
+    marginTop: verticalScale(5),
   },
 
   toast: {
     position: "absolute",
     zIndex: 100,
-    left: scale(16),
-    right: scale(16),
-    minHeight: verticalScale(52),
-    borderRadius: moderateScale(17),
-    paddingHorizontal: scale(15),
+    left: scale(14),
+    right: scale(14),
+    minHeight: verticalScale(48),
+    borderRadius: moderateScale(15),
+    paddingHorizontal: scale(13),
     flexDirection: "row",
     alignItems: "center",
-    gap: scale(9),
     shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 7,
-    },
-    shadowOpacity: 0.18,
-    shadowRadius: 14,
-    elevation: 10,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.16,
+    shadowRadius: 12,
+    elevation: 9,
   },
   toastSuccess: {
     backgroundColor: "#168B54",
@@ -1686,7 +1745,8 @@ const styles = StyleSheet.create({
   toastText: {
     flex: 1,
     color: COLORS.white,
-    fontSize: moderateScale(12.5),
+    fontSize: moderateScale(10.5),
     fontWeight: "700",
+    marginLeft: scale(7),
   },
 });

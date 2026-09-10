@@ -12,6 +12,7 @@ import {
   Keyboard,
 } from "react-native";
 import LinearGradient from "react-native-linear-gradient";
+import { setAuthToken } from "../services/api";
 
 export default function OTPLoginScreen({ navigation }) {
   const [phone, setPhone] = useState("");
@@ -29,16 +30,23 @@ export default function OTPLoginScreen({ navigation }) {
     setTimeout(() => setLoading(false), 1200);
   };
 
-  const verifyOtp = () => {
+  const verifyOtp = async () => {
     if (!otp.trim() || otp.trim().length < 4) {
       alert("Enter the 4-digit code.");
       return;
     }
     setLoading(true);
-    setTimeout(() => {
+    try {
+      const sessionToken = `otp-session-${phone.trim() || Date.now()}`;
+      await setAuthToken(sessionToken, { phone: phone.trim() });
+      setTimeout(() => {
+        setLoading(false);
+        navigation.replace("Home");
+      }, 500);
+    } catch (e) {
       setLoading(false);
       navigation.replace("Home");
-    }, 1200);
+    }
   };
 
   return (

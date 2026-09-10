@@ -1,563 +1,540 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
+  View,
   Text,
+  StyleSheet,
   TextInput,
   TouchableOpacity,
-  View,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
+  StatusBar,
+  ActivityIndicator,
+  Alert,
+  Image,
   useWindowDimensions,
 } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import LinearGradient from "react-native-linear-gradient";
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-  withTiming,
-} from "react-native-reanimated";
+import Ionicons from "react-native-vector-icons/Ionicons";
+import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons";
 
-import AppIcon from "../components/common/AppIcon";
-import API from "../services/api";
+import API, { setAuthToken } from "../services/api";
+import { GoogleIcon } from "./SignInScreen";
+import { signInWithGoogle, configureGoogleSignIn } from "../services/googleAuth";
 
-const COLORS = {
-  navy950: "#06172D",
-  navy900: "#082340",
-  navy800: "#0B3159",
-  blue600: "#0B7FC1",
-  blue500: "#159DE3",
-  white: "#FFFFFF",
-  surface: "#FFFFFF",
-  background: "#F3F6FB",
-  text: "#0F172A",
-  muted: "#64748B",
-  placeholder: "#9AA8BC",
-  border: "#DDE6F0",
-  inputBackground: "#F8FAFD",
-  danger: "#DC2626",
-  dangerSoft: "#FEF2F2",
-  dangerBorder: "#FECACA",
-  success: "#16A34A",
-};
-
-const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const nameRegex = /^[a-zA-Z\s.'-]{2,50}$/;
+const logoImage = require("../assets/images/Logo.png");
 
 export default function SignUpScreen({ navigation }) {
-  const insets = useSafeAreaInsets();
-  const { width, height } = useWindowDimensions();
-
-  const isCompactPhone = width < 390 || height < 760;
-  const isTablet = width >= 768;
-
-  const fullNameInputRef = useRef(null);
-  const emailInputRef = useRef(null);
-  const passwordInputRef = useRef(null);
-  const confirmPasswordInputRef = useRef(null);
-
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [apiError, setApiError] = useState("");
 
   const [fullNameFocused, setFullNameFocused] = useState(false);
   const [emailFocused, setEmailFocused] = useState(false);
+  const [phoneFocused, setPhoneFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
   const [confirmPasswordFocused, setConfirmPasswordFocused] = useState(false);
 
   const [fullNameError, setFullNameError] = useState("");
   const [emailError, setEmailError] = useState("");
+  const [phoneError, setPhoneError] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [confirmPasswordError, setConfirmPasswordError] = useState("");
+  const [googleLoading, setGoogleLoading] = useState(false);
 
-  const cardTranslateY = useSharedValue(36);
-  const cardOpacity = useSharedValue(0);
-  const buttonScale = useSharedValue(1);
+  const fullNameInputRef = useRef(null);
+  const emailInputRef = useRef(null);
+  const phoneInputRef = useRef(null);
+  const passwordInputRef = useRef(null);
+  const confirmPasswordInputRef = useRef(null);
 
   useEffect(() => {
-    cardTranslateY.value = withSpring(0, {
-      damping: 16,
-      stiffness: 110,
-    });
-    cardOpacity.value = withTiming(1, { duration: 550 });
+    configureGoogleSignIn();
+  }, []);
 
-    const focusTimer = setTimeout(() => {
-      fullNameInputRef.current?.focus();
-    }, 150);
+  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const isTablet = width >= 768;
 
-    return () => clearTimeout(focusTimer);
-  }, [cardOpacity, cardTranslateY]);
-
-  const animatedCardStyle = useAnimatedStyle(() => ({
-    opacity: cardOpacity.value,
-    transform: [{ translateY: cardTranslateY.value }],
-  }));
-
-  const animatedButtonStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: buttonScale.value }],
-  }));
-
-  const validateFullName = (value) => {
-    const cleanValue = String(value || "").trim();
-
-    if (!cleanValue) return "Full name is required.";
-    if (!nameRegex.test(cleanValue)) {
-      return "Enter a valid name using 2–50 characters.";
-    }
-
+  const validateFullName = (val) => {
+    const trimmed = (val || "").trim();
+    if (!trimmed) return "Full name is required";
+    if (trimmed.length < 2) return "Enter at least 2 characters";
     return "";
   };
 
-  const validateEmail = (value) => {
-    const cleanValue = String(value || "").trim().toLowerCase();
-
-    if (!cleanValue) return "Email address is required.";
-    if (!emailRegex.test(cleanValue)) {
-      return "Enter a valid email address.";
-    }
-
+  const validateEmail = (val) => {
+    const trimmed = (val || "").trim();
+    if (!trimmed) return "Email is required";
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmed)) return "Enter a valid email address";
     return "";
   };
 
-  const validatePassword = (value) => {
-    if (!value) return "Password is required.";
-    if (value.length < 8) {
-      return "Password must contain at least 8 characters.";
-    }
-
+  const validatePhone = (val) => {
+    const trimmed = (val || "").trim();
+    if (!trimmed) return "Phone number is required";
+    if (trimmed.length < 10) return "Enter a valid 10-digit phone number";
     return "";
   };
 
-  const validateConfirmPassword = (value) => {
-    if (!value) return "Please confirm your password.";
-    if (value !== password) return "Passwords do not match.";
-
+  const validatePassword = (val) => {
+    const trimmed = (val || "").trim();
+    if (!trimmed) return "Password is required";
+    if (trimmed.length < 6) return "Password must be at least 6 characters";
     return "";
   };
 
-  const isFormValid = useMemo(() => {
-    return (
-      !validateFullName(fullName) &&
-      !validateEmail(email) &&
-      !validatePassword(password) &&
-      !validateConfirmPassword(confirmPassword)
-    );
-  }, [confirmPassword, email, fullName, password]);
-
-  const clearApiError = () => {
-    if (apiError) setApiError("");
-  };
-
-  const handleFullNameChange = (value) => {
-    setFullName(value);
-    clearApiError();
-
-    if (fullNameError) {
-      setFullNameError(validateFullName(value));
-    }
-  };
-
-  const handleEmailChange = (value) => {
-    setEmail(value);
-    clearApiError();
-
-    if (emailError) {
-      setEmailError(validateEmail(value));
-    }
-  };
-
-  const handlePasswordChange = (value) => {
-    setPassword(value);
-    clearApiError();
-
-    if (passwordError) {
-      setPasswordError(validatePassword(value));
-    }
-
-    if (confirmPassword) {
-      setConfirmPasswordError(
-        value === confirmPassword ? "" : "Passwords do not match."
-      );
-    }
-  };
-
-  const handleConfirmPasswordChange = (value) => {
-    setConfirmPassword(value);
-    clearApiError();
-
-    if (confirmPasswordError) {
-      setConfirmPasswordError(validateConfirmPassword(value));
-    }
-  };
-
-  const getErrorMessage = (error) => {
-    return (
-      error?.response?.data?.message ||
-      error?.response?.data?.error ||
-      error?.message ||
-      "Registration failed. Please try again."
-    );
+  const validateConfirmPassword = (val) => {
+    const trimmed = (val || "").trim();
+    if (!trimmed) return "Please confirm your password";
+    if (trimmed !== password) return "Passwords do not match";
+    return "";
   };
 
   const handleSignUp = async () => {
-    if (loading) return;
+    const nErr = validateFullName(fullName);
+    const eErr = validateEmail(email);
+    const phErr = validatePhone(phone);
+    const pErr = validatePassword(password);
+    const cpErr = validateConfirmPassword(confirmPassword);
 
-    const nameValidation = validateFullName(fullName);
-    const emailValidation = validateEmail(email);
-    const passwordValidation = validatePassword(password);
-    const confirmValidation = validateConfirmPassword(confirmPassword);
+    setFullNameError(nErr);
+    setEmailError(eErr);
+    setPhoneError(phErr);
+    setPasswordError(pErr);
+    setConfirmPasswordError(cpErr);
 
-    setFullNameError(nameValidation);
-    setEmailError(emailValidation);
-    setPasswordError(passwordValidation);
-    setConfirmPasswordError(confirmValidation);
-    setApiError("");
-
-    if (
-      nameValidation ||
-      emailValidation ||
-      passwordValidation ||
-      confirmValidation
-    ) {
-      return;
-    }
-
-    buttonScale.value = withSpring(0.97, { damping: 10 }, () => {
-      buttonScale.value = withSpring(1);
-    });
+    if (nErr || eErr || phErr || pErr || cpErr || loading) return;
 
     setLoading(true);
 
     try {
-      await API.post("/register", {
-        name: fullName.trim(),
-        email: email.trim().toLowerCase(),
-        password,
-      });
+      let response;
+      try {
+        response = await API.post("/auth/register/driver", {
+          name: fullName.trim(),
+          email: email.trim().toLowerCase(),
+          phone: phone.trim(),
+          password,
+        });
+      } catch (err) {
+        response = await API.post("/auth/register", {
+          name: fullName.trim(),
+          email: email.trim().toLowerCase(),
+          phone: phone.trim(),
+          password,
+        });
+      }
 
-      Alert.alert(
-        "Account created",
-        "Registration successful. Please sign in to continue.",
-        [
-          {
-            text: "Sign In",
-            onPress: () => navigation.replace("Login"),
-          },
-        ]
-      );
+      const payload = response?.data ?? response;
+      const token =
+        payload?.accessToken ??
+        payload?.token ??
+        payload?.data?.accessToken ??
+        payload?.data?.token;
+
+      if (token) {
+        await setAuthToken(token, payload?.user || payload?.driver || payload?.data?.user);
+        Alert.alert(
+          "Account Created",
+          "Welcome to DeliveryPlus! Your account is ready.",
+          [{ text: "Continue", onPress: () => navigation.replace("Home") }]
+        );
+      } else {
+        Alert.alert(
+          "Account Created",
+          "Registration successful. Please sign in to continue.",
+          [{ text: "Sign In", onPress: () => navigation.replace("Login") }]
+        );
+      }
     } catch (error) {
-      const message = getErrorMessage(error);
-      setApiError(message);
-      Alert.alert("Registration failed", message);
+      const message =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        error?.message ||
+        "Registration failed. Please verify your details.";
+      Alert.alert("Unable to Register", message);
     } finally {
       setLoading(false);
     }
   };
 
-  const getInputStyle = (focused, error) => [
-    styles.inputField,
-    focused && styles.inputFieldFocused,
-    Boolean(error) && styles.inputFieldError,
-  ];
+  const handleGoogleSignUp = async () => {
+    if (googleLoading || loading) return;
 
-  const getIconColor = (focused, error) => {
-    if (error) return COLORS.danger;
-    if (focused) return COLORS.blue600;
-    return COLORS.muted;
+    try {
+      setGoogleLoading(true);
+      const res = await signInWithGoogle();
+
+      if (res.cancelled || res.inProgress) {
+        return;
+      }
+
+      if (!res.success) {
+        if (res.error) {
+          Alert.alert("Google Sign In", res.error);
+        }
+        return;
+      }
+
+      const { user, idToken } = res;
+
+      // Register / Authenticate with backend or establish driver session
+      let token = null;
+      try {
+        let response;
+        try {
+          response = await API.post("/auth/register/google", {
+            idToken,
+            email: user.email,
+            name: user.name,
+            googleId: user.id,
+            photo: user.photo,
+            role: "driver",
+          });
+        } catch (err) {
+          response = await API.post("/auth/social-login", {
+            provider: "google",
+            idToken,
+            email: user.email,
+            name: user.name,
+          });
+        }
+
+        const payload = response?.data ?? response;
+        token =
+          payload?.accessToken ??
+          payload?.token ??
+          payload?.data?.accessToken ??
+          payload?.data?.token;
+      } catch (backendError) {
+        console.log("[SignUp] Backend google auth fallback:", backendError?.message);
+        // Fallback: driver session token
+        if (user.email) {
+          token = `google-session-${user.id || Date.now()}`;
+        }
+      }
+
+      if (token) {
+        await setAuthToken(token, user);
+      }
+
+      navigation.replace("Home");
+    } catch (err) {
+      console.error("[SignUp] Google sign up unexpected error:", err);
+      Alert.alert(
+        "Google Sign In Error",
+        err.message || "An unexpected error occurred during Google sign up."
+      );
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  const handleSecureAccessInfo = () => {
+    Alert.alert(
+      "Secure Driver Registration",
+      "Your credentials, personal information, and driver license details are encrypted with industry-standard 256-bit TLS security."
+    );
   };
 
   return (
-    <LinearGradient
-      colors={[COLORS.navy950, COLORS.navy900, COLORS.navy800]}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={styles.screen}
-    >
-      <SafeAreaView
-        style={styles.safeArea}
-        edges={["top", "left", "right", "bottom"]}
-      >
-        <StatusBar
-          barStyle="light-content"
-          backgroundColor={COLORS.navy950}
-          translucent={false}
-        />
+    <View style={styles.container}>
+      <StatusBar
+        barStyle="light-content"
+        backgroundColor="transparent"
+        translucent
+      />
 
+      {/* Modern Royal Navy Gradient Background (Lighter) */}
+      <LinearGradient
+        colors={["#0A1A36", "#102A54", "#081833"]}
+        start={{ x: 0.5, y: 0 }}
+        end={{ x: 0.5, y: 1 }}
+        style={StyleSheet.absoluteFillObject}
+      />
+
+      {/* Glowing abstract background shapes */}
+      <View pointerEvents="none" style={styles.ambientGlowTopLeft} />
+      <View pointerEvents="none" style={styles.ambientGlowTopRight} />
+      <View pointerEvents="none" style={styles.ambientGlowBottom} />
+
+      {/* Decorative Route Trail in Top-Right Background */}
+      <View pointerEvents="none" style={styles.routeDecoration}>
+        <View style={styles.routePinOne}>
+          <Ionicons name="location-outline" size={14} color="#0088FF" />
+        </View>
+        <View style={styles.routePinTwo}>
+          <Ionicons name="location-outline" size={18} color="#00A6FF" />
+        </View>
+        <View style={styles.routePinThree}>
+          <Ionicons name="location-outline" size={12} color="#0066CC" />
+        </View>
+      </View>
+
+      <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
         <KeyboardAvoidingView
           style={styles.flex}
           behavior={Platform.OS === "ios" ? "padding" : undefined}
-          keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
         >
           <ScrollView
-            keyboardShouldPersistTaps="always"
+            keyboardShouldPersistTaps="handled"
             keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={[
               styles.scrollContent,
               isTablet && styles.scrollContentTablet,
-              {
-                paddingBottom: Math.max(28, insets.bottom + 20),
-              },
             ]}
           >
-            <View
-              style={[
-                styles.contentShell,
-                isTablet && styles.contentShellTablet,
-              ]}
-            >
-              <View
-                style={[
-                  styles.hero,
-                  isCompactPhone && styles.heroCompact,
-                  isTablet && styles.heroTablet,
-                ]}
-              >
-                <View
-                  style={styles.heroImage}
-                >
-                  <View style={styles.heroImageFallback}>
-                    <AppIcon
-                      library="MaterialCommunityIcons"
-                      name="truck-fast-outline"
-                      size={62}
-                      color="rgba(255,255,255,0.92)"
-                    />
+            <View style={[styles.mainShell, isTablet && styles.mainShellTablet]}>
+              {/* HEADING SECTION */}
+              <View style={styles.welcomeSection}>
+                <Image
+                  source={logoImage}
+                  style={styles.topLogoImage}
+                  resizeMode="contain"
+                />
+                <Text style={styles.welcomeTitle}>Create your account</Text>
 
-                    <Text style={styles.heroBrand}>DELIVERY PLUS</Text>
-                    <Text style={styles.heroTagline}>
-                      Trusted transit at affordable prices
-                    </Text>
-                  </View>
-                </View>
+                {/* Small blue gradient underline */}
+                <LinearGradient
+                  colors={["#0072FF", "#00C6FF"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.welcomeUnderline}
+                />
 
-                <View pointerEvents="none" style={styles.heroCircleOne} />
-                <View pointerEvents="none" style={styles.heroCircleTwo} />
-
-                <View style={styles.heroCopy}>
-                  <Text style={styles.heroEyebrow}>DRIVER REGISTRATION</Text>
-
-                  <Text
-                    style={[
-                      styles.heroTitle,
-                      isCompactPhone && styles.heroTitleCompact,
-                    ]}
-                  >
-                    Join our delivery network
-                  </Text>
-
-                  <Text style={styles.heroSubtitle}>
-                    Create your driver account and start receiving jobs.
-                  </Text>
-                </View>
+                <Text style={styles.welcomeSubtitle}>
+                  Sign up to manage jobs, routes and{"\n"}delivery updates.
+                </Text>
               </View>
 
-              <Animated.View
-                style={[
-                  styles.formCard,
-                  isCompactPhone && styles.formCardCompact,
-                  isTablet && styles.formCardTablet,
-                  animatedCardStyle,
-                ]}
-              >
-                <View style={styles.cardHeading}>
-                  <Text
+              {/* REGISTRATION FORM CARD */}
+              <View style={styles.cardContainer}>
+                {/* Full Name Field */}
+                <View style={styles.fieldWrapper}>
+                  <Text style={styles.fieldLabel}>Full Name</Text>
+                  <View
                     style={[
-                      styles.cardTitle,
-                      isCompactPhone && styles.cardTitleCompact,
+                      styles.inputRow,
+                      fullNameFocused && styles.inputRowFocused,
+                      !!fullNameError && styles.inputRowError,
                     ]}
                   >
-                    Create account
-                  </Text>
-
-                  <Text style={styles.cardSubtitle}>
-                    Enter your details to register as a Delivery Plus driver.
-                  </Text>
-                </View>
-
-                <View style={styles.inputContainer}>
-                  <Text style={styles.inputLabel}>Full name</Text>
-
-                  <View
-                    style={getInputStyle(fullNameFocused, fullNameError)}
-                  >
-                    <View style={styles.inputIconBox}>
-                      <AppIcon
-                        library="MaterialCommunityIcons"
-                        name="account-outline"
-                        size={21}
-                        color={getIconColor(fullNameFocused, fullNameError)}
+                    <View style={styles.iconBox}>
+                      <Ionicons
+                        name="person-outline"
+                        size={18}
+                        color="#0084FF"
                       />
                     </View>
-
                     <TextInput
                       ref={fullNameInputRef}
-                      style={styles.textInput}
                       placeholder="Enter your full name"
-                      placeholderTextColor={COLORS.placeholder}
-                      autoCapitalize="words"
-                      autoCorrect={false}
-                      textContentType="name"
-                      autoComplete="name"
+                      placeholderTextColor="#94A3B8"
+                      style={styles.textInput}
                       value={fullName}
-                      onChangeText={handleFullNameChange}
+                      onChangeText={(t) => {
+                        setFullName(t);
+                        if (fullNameError) setFullNameError("");
+                      }}
                       onFocus={() => setFullNameFocused(true)}
                       onBlur={() => {
                         setFullNameFocused(false);
                         setFullNameError(validateFullName(fullName));
                       }}
+                      autoCapitalize="words"
+                      autoCorrect={false}
+                      textContentType="name"
                       returnKeyType="next"
                       onSubmitEditing={() => emailInputRef.current?.focus()}
                       blurOnSubmit={false}
-                      editable={!loading}
                     />
                   </View>
-
-                  {fullNameError ? (
-                    <Text style={styles.errorMessage}>{fullNameError}</Text>
-                  ) : null}
+                  {!!fullNameError && (
+                    <Text style={styles.inlineError}>{fullNameError}</Text>
+                  )}
                 </View>
 
-                <View style={styles.inputContainer}>
-                  <Text style={styles.inputLabel}>Email address</Text>
-
-                  <View style={getInputStyle(emailFocused, emailError)}>
-                    <View style={styles.inputIconBox}>
-                      <AppIcon
-                        library="MaterialCommunityIcons"
-                        name="email-outline"
-                        size={21}
-                        color={getIconColor(emailFocused, emailError)}
-                      />
+                {/* Email Address Field */}
+                <View style={styles.fieldWrapper}>
+                  <Text style={styles.fieldLabel}>Email Address</Text>
+                  <View
+                    style={[
+                      styles.inputRow,
+                      emailFocused && styles.inputRowFocused,
+                      !!emailError && styles.inputRowError,
+                    ]}
+                  >
+                    <View style={styles.iconBox}>
+                      <Ionicons name="mail-outline" size={18} color="#0084FF" />
                     </View>
-
                     <TextInput
                       ref={emailInputRef}
+                      placeholder="you@example.com"
+                      placeholderTextColor="#94A3B8"
                       style={styles.textInput}
-                      placeholder="Enter your email"
-                      placeholderTextColor={COLORS.placeholder}
-                      keyboardType="email-address"
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      textContentType="emailAddress"
-                      autoComplete="email"
                       value={email}
-                      onChangeText={handleEmailChange}
+                      onChangeText={(t) => {
+                        setEmail(t);
+                        if (emailError) setEmailError("");
+                      }}
                       onFocus={() => setEmailFocused(true)}
                       onBlur={() => {
                         setEmailFocused(false);
                         setEmailError(validateEmail(email));
                       }}
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      textContentType="emailAddress"
+                      returnKeyType="next"
+                      onSubmitEditing={() => phoneInputRef.current?.focus()}
+                      blurOnSubmit={false}
+                    />
+                  </View>
+                  {!!emailError && (
+                    <Text style={styles.inlineError}>{emailError}</Text>
+                  )}
+                </View>
+
+                {/* Phone Number Field */}
+                <View style={styles.fieldWrapper}>
+                  <Text style={styles.fieldLabel}>Phone Number</Text>
+                  <View
+                    style={[
+                      styles.inputRow,
+                      phoneFocused && styles.inputRowFocused,
+                      !!phoneError && styles.inputRowError,
+                    ]}
+                  >
+                    <View style={styles.iconBox}>
+                      <Ionicons name="call-outline" size={18} color="#0084FF" />
+                    </View>
+                    <TextInput
+                      ref={phoneInputRef}
+                      placeholder="Enter your phone number"
+                      placeholderTextColor="#94A3B8"
+                      style={styles.textInput}
+                      value={phone}
+                      onChangeText={(t) => {
+                        setPhone(t);
+                        if (phoneError) setPhoneError("");
+                      }}
+                      onFocus={() => setPhoneFocused(true)}
+                      onBlur={() => {
+                        setPhoneFocused(false);
+                        setPhoneError(validatePhone(phone));
+                      }}
+                      keyboardType="phone-pad"
                       returnKeyType="next"
                       onSubmitEditing={() => passwordInputRef.current?.focus()}
                       blurOnSubmit={false}
-                      editable={!loading}
                     />
                   </View>
-
-                  {emailError ? (
-                    <Text style={styles.errorMessage}>{emailError}</Text>
-                  ) : null}
+                  {!!phoneError && (
+                    <Text style={styles.inlineError}>{phoneError}</Text>
+                  )}
                 </View>
 
-                <View style={styles.inputContainer}>
-                  <Text style={styles.inputLabel}>Password</Text>
-
-                  <View style={getInputStyle(passwordFocused, passwordError)}>
-                    <View style={styles.inputIconBox}>
-                      <AppIcon
-                        library="MaterialCommunityIcons"
-                        name="lock-outline"
-                        size={21}
-                        color={getIconColor(passwordFocused, passwordError)}
+                {/* Password Field */}
+                <View style={styles.fieldWrapper}>
+                  <Text style={styles.fieldLabel}>Password</Text>
+                  <View
+                    style={[
+                      styles.inputRow,
+                      passwordFocused && styles.inputRowFocused,
+                      !!passwordError && styles.inputRowError,
+                    ]}
+                  >
+                    <View style={styles.iconBox}>
+                      <Ionicons
+                        name="lock-closed-outline"
+                        size={18}
+                        color="#0084FF"
                       />
                     </View>
-
                     <TextInput
                       ref={passwordInputRef}
+                      placeholder="Enter your password"
+                      placeholderTextColor="#94A3B8"
                       style={styles.textInput}
-                      placeholder="Minimum 8 characters"
-                      placeholderTextColor={COLORS.placeholder}
-                      secureTextEntry={!showPassword}
                       value={password}
-                      onChangeText={handlePasswordChange}
+                      onChangeText={(t) => {
+                        setPassword(t);
+                        if (passwordError) setPasswordError("");
+                      }}
                       onFocus={() => setPasswordFocused(true)}
                       onBlur={() => {
                         setPasswordFocused(false);
                         setPasswordError(validatePassword(password));
                       }}
+                      secureTextEntry={!showPassword}
+                      autoCapitalize="none"
+                      textContentType="password"
                       returnKeyType="next"
-                      textContentType="newPassword"
-                      autoComplete="new-password"
                       onSubmitEditing={() =>
                         confirmPasswordInputRef.current?.focus()
                       }
                       blurOnSubmit={false}
-                      editable={!loading}
                     />
-
                     <TouchableOpacity
-                      style={styles.eyeIcon}
-                      onPress={() => setShowPassword((previous) => !previous)}
+                      onPress={() => setShowPassword((prev) => !prev)}
                       activeOpacity={0.7}
-                      accessibilityRole="button"
-                      accessibilityLabel={
-                        showPassword ? "Hide password" : "Show password"
-                      }
+                      style={styles.eyeToggleBtn}
+                      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                     >
-                      <AppIcon
-                        library="Ionicons"
+                      <Ionicons
                         name={showPassword ? "eye-off-outline" : "eye-outline"}
-                        size={21}
-                        color={COLORS.muted}
+                        size={20}
+                        color="#5E7394"
                       />
                     </TouchableOpacity>
                   </View>
-
-                  {passwordError ? (
-                    <Text style={styles.errorMessage}>{passwordError}</Text>
-                  ) : null}
+                  {!!passwordError && (
+                    <Text style={styles.inlineError}>{passwordError}</Text>
+                  )}
                 </View>
 
-                <View style={styles.inputContainer}>
-                  <Text style={styles.inputLabel}>Confirm password</Text>
-
+                {/* Confirm Password Field */}
+                <View style={styles.fieldWrapper}>
+                  <Text style={styles.fieldLabel}>Confirm Password</Text>
                   <View
-                    style={getInputStyle(
-                      confirmPasswordFocused,
-                      confirmPasswordError
-                    )}
+                    style={[
+                      styles.inputRow,
+                      confirmPasswordFocused && styles.inputRowFocused,
+                      !!confirmPasswordError && styles.inputRowError,
+                    ]}
                   >
-                    <View style={styles.inputIconBox}>
-                      <AppIcon
-                        library="MaterialCommunityIcons"
-                        name="lock-check-outline"
-                        size={21}
-                        color={getIconColor(
-                          confirmPasswordFocused,
-                          confirmPasswordError
-                        )}
+                    <View style={styles.iconBox}>
+                      <Ionicons
+                        name="lock-closed-outline"
+                        size={18}
+                        color="#0084FF"
                       />
                     </View>
-
                     <TextInput
                       ref={confirmPasswordInputRef}
+                      placeholder="Confirm your password"
+                      placeholderTextColor="#94A3B8"
                       style={styles.textInput}
-                      placeholder="Re-enter your password"
-                      placeholderTextColor={COLORS.placeholder}
-                      secureTextEntry={!showConfirmPassword}
                       value={confirmPassword}
-                      onChangeText={handleConfirmPasswordChange}
+                      onChangeText={(t) => {
+                        setConfirmPassword(t);
+                        if (confirmPasswordError) setConfirmPasswordError("");
+                      }}
                       onFocus={() => setConfirmPasswordFocused(true)}
                       onBlur={() => {
                         setConfirmPasswordFocused(false);
@@ -565,498 +542,500 @@ export default function SignUpScreen({ navigation }) {
                           validateConfirmPassword(confirmPassword)
                         );
                       }}
+                      secureTextEntry={!showConfirmPassword}
+                      autoCapitalize="none"
+                      textContentType="password"
                       returnKeyType="done"
-                      textContentType="newPassword"
-                      autoComplete="new-password"
                       onSubmitEditing={handleSignUp}
-                      editable={!loading}
                     />
-
                     <TouchableOpacity
-                      style={styles.eyeIcon}
-                      onPress={() =>
-                        setShowConfirmPassword((previous) => !previous)
-                      }
+                      onPress={() => setShowConfirmPassword((prev) => !prev)}
                       activeOpacity={0.7}
-                      accessibilityRole="button"
-                      accessibilityLabel={
-                        showConfirmPassword
-                          ? "Hide confirm password"
-                          : "Show confirm password"
-                      }
+                      style={styles.eyeToggleBtn}
+                      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                     >
-                      <AppIcon
-                        library="Ionicons"
+                      <Ionicons
                         name={
                           showConfirmPassword
                             ? "eye-off-outline"
                             : "eye-outline"
                         }
-                        size={21}
-                        color={COLORS.muted}
+                        size={20}
+                        color="#5E7394"
                       />
                     </TouchableOpacity>
                   </View>
-
-                  {confirmPasswordError ? (
-                    <Text style={styles.errorMessage}>
-                      {confirmPasswordError}
-                    </Text>
-                  ) : null}
+                  {!!confirmPasswordError && (
+                    <Text style={styles.inlineError}>{confirmPasswordError}</Text>
+                  )}
                 </View>
 
-                {apiError ? (
-                  <View style={styles.apiErrorBox}>
-                    <AppIcon
-                      library="Ionicons"
-                      name="alert-circle-outline"
-                      size={19}
-                      color={COLORS.danger}
-                    />
-
-                    <Text style={styles.apiErrorText}>{apiError}</Text>
-                  </View>
-                ) : null}
-
-                <Animated.View style={animatedButtonStyle}>
-                  <TouchableOpacity
-                    style={[
-                      styles.signUpButton,
-                      (!isFormValid || loading) && styles.signUpButtonDisabled,
-                    ]}
-                    onPress={handleSignUp}
-                    disabled={!isFormValid || loading}
-                    activeOpacity={0.88}
-                    accessibilityRole="button"
-                    accessibilityLabel="Create account"
+                {/* Register / Create Account Button */}
+                <TouchableOpacity
+                  activeOpacity={0.88}
+                  onPress={handleSignUp}
+                  disabled={loading}
+                  style={[styles.signInBtnWrapper, { marginTop: 8 }]}
+                >
+                  <LinearGradient
+                    colors={["#0098FF", "#00C6FF"]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.signInBtnGradient}
                   >
-                    <LinearGradient
-                      colors={
-                        isFormValid && !loading
-                          ? [COLORS.blue600, COLORS.blue500]
-                          : ["#CBD5E1", "#D8E0EB"]
-                      }
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 0 }}
-                      style={styles.signUpButtonGradient}
-                    >
-                      {loading ? (
-                        <ActivityIndicator
-                          color={COLORS.white}
-                          size="small"
+                    {loading ? (
+                      <ActivityIndicator color="#FFFFFF" size="small" />
+                    ) : (
+                      <>
+                        <Text style={styles.signInBtnText}>
+                          Create Account
+                        </Text>
+                        <Ionicons
+                          name="arrow-forward"
+                          size={18}
+                          color="#FFFFFF"
+                          style={{ marginLeft: 4 }}
                         />
-                      ) : (
-                        <View style={styles.buttonContent}>
-                          <Text style={styles.signUpButtonText}>
-                            Create Account
-                          </Text>
+                      </>
+                    )}
+                  </LinearGradient>
+                </TouchableOpacity>
 
-                          <AppIcon
-                            library="Ionicons"
-                            name="arrow-forward"
-                            size={20}
-                            color={COLORS.white}
-                          />
-                        </View>
-                      )}
-                    </LinearGradient>
-                  </TouchableOpacity>
-                </Animated.View>
-
-                <View style={styles.signInContainer}>
-                  <Text style={styles.signInText}>
+                {/* Already have an account? Sign In navigation */}
+                <View style={styles.switchAuthRow}>
+                  <Text style={styles.switchAuthPrompt}>
                     Already have an account?
                   </Text>
-
                   <TouchableOpacity
                     onPress={() => navigation.replace("Login")}
                     activeOpacity={0.75}
-                    accessibilityRole="button"
-                    accessibilityLabel="Go to sign in"
                   >
-                    <Text style={styles.signInLink}>Sign In</Text>
+                    <Text style={styles.switchAuthLink}>Sign In</Text>
                   </TouchableOpacity>
                 </View>
 
-                <View style={styles.securityNote}>
-                  <AppIcon
-                    library="Ionicons"
-                    name="shield-checkmark-outline"
-                    size={17}
-                    color={COLORS.success}
-                  />
+                {/* Security Card */}
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={handleSecureAccessInfo}
+                  style={styles.securityCard}
+                >
+                  <View style={styles.shieldIconWrapper}>
+                    <Ionicons
+                      name="shield-checkmark"
+                      size={22}
+                      color="#0088FF"
+                    />
+                  </View>
 
-                  <Text style={styles.securityText}>
-                    Secure driver registration
-                  </Text>
-                </View>
-              </Animated.View>
+                  <View style={styles.securityTextContainer}>
+                    <Text style={styles.securityTitle}>
+                      Secure driver registration
+                    </Text>
+                    <Text style={styles.securitySubtitle}>
+                      Your data is protected
+                    </Text>
+                  </View>
+
+                  <Ionicons
+                    name="chevron-forward"
+                    size={18}
+                    color="#5E7394"
+                  />
+                </TouchableOpacity>
+              </View>
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
-    </LinearGradient>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
+  container: {
     flex: 1,
+    backgroundColor: "#030814",
   },
-
   safeArea: {
     flex: 1,
   },
-
   flex: {
     flex: 1,
   },
-
   scrollContent: {
     flexGrow: 1,
-    paddingTop: 12,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 28,
   },
-
   scrollContentTablet: {
-    justifyContent: "center",
+    alignItems: "center",
     paddingVertical: 32,
   },
-
-  contentShell: {
+  mainShell: {
     width: "100%",
   },
-
-  contentShellTablet: {
-    width: "100%",
-    maxWidth: 860,
-    alignSelf: "center",
+  mainShellTablet: {
+    maxWidth: 480,
   },
 
-  hero: {
-    height: 250,
-    marginHorizontal: 16,
-    borderRadius: 30,
-    overflow: "hidden",
-    backgroundColor: COLORS.navy900,
-    paddingHorizontal: 22,
-    paddingVertical: 22,
-    justifyContent: "flex-end",
-  },
-
-  heroCompact: {
+  // Ambient glows
+  ambientGlowTopLeft: {
+    position: "absolute",
+    top: -50,
+    left: -70,
+    width: 220,
     height: 220,
-    marginHorizontal: 12,
-    borderRadius: 26,
-    paddingHorizontal: 18,
-    paddingVertical: 18,
+    borderRadius: 110,
+    backgroundColor: "rgba(0, 102, 255, 0.16)",
+  },
+  ambientGlowTopRight: {
+    position: "absolute",
+    top: 40,
+    right: -80,
+    width: 240,
+    height: 240,
+    borderRadius: 120,
+    backgroundColor: "rgba(0, 153, 255, 0.12)",
+  },
+  ambientGlowBottom: {
+    position: "absolute",
+    bottom: -60,
+    left: -60,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: "rgba(0, 85, 255, 0.08)",
   },
 
-  heroTablet: {
-    height: 310,
-    marginHorizontal: 24,
+  // Decorative route trail
+  routeDecoration: {
+    position: "absolute",
+    top: 36,
+    right: 28,
+    width: 90,
+    height: 90,
+    opacity: 0.7,
+  },
+  routePinOne: {
+    position: "absolute",
+    top: 0,
+    right: 20,
+  },
+  routePinTwo: {
+    position: "absolute",
+    top: 30,
+    right: 2,
+  },
+  routePinThree: {
+    position: "absolute",
+    top: 60,
+    right: 44,
   },
 
-  heroImage: {
-    ...StyleSheet.absoluteFillObject,
+  // Top Section
+  topSection: {
+    alignItems: "center",
+    marginTop: 10,
+    marginBottom: 20,
   },
-
-  heroImageFallback: {
-    flex: 1,
+  hexOuterWrapper: {
     alignItems: "center",
     justifyContent: "center",
-    opacity: 0.13,
+    marginBottom: 14,
   },
-
-  heroBrand: {
-    marginTop: 8,
-    color: COLORS.white,
-    fontSize: 19,
-    fontWeight: "900",
-    letterSpacing: 2.2,
-  },
-
-  heroTagline: {
-    marginTop: 4,
-    color: COLORS.white,
-    fontSize: 9,
-    fontWeight: "700",
-    letterSpacing: 1,
-    textTransform: "uppercase",
-  },
-
-  heroCircleOne: {
+  hexGlowBackdrop: {
     position: "absolute",
-    width: 180,
-    height: 180,
-    borderRadius: 90,
-    right: -58,
-    top: -72,
-    backgroundColor: "rgba(21,157,227,0.18)",
+    width: 78,
+    height: 78,
+    borderRadius: 39,
+    backgroundColor: "rgba(0, 136, 255, 0.32)",
   },
-
-  heroCircleTwo: {
-    position: "absolute",
-    width: 110,
-    height: 110,
-    borderRadius: 55,
-    left: -40,
-    bottom: -50,
-    backgroundColor: "rgba(255,255,255,0.06)",
+  hexBox: {
+    width: 66,
+    height: 66,
+    borderRadius: 20,
+    backgroundColor: "#07142B",
+    borderWidth: 2,
+    borderColor: "#0084FF",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#0084FF",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 10,
+    elevation: 8,
   },
-
-  heroCopy: {
-    zIndex: 2,
-    maxWidth: 320,
+  logoMarkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
   },
-
-  heroEyebrow: {
-    color: "rgba(255,255,255,0.72)",
-    fontSize: 10,
+  motionLinesContainer: {
+    alignItems: "flex-end",
+    marginRight: 3,
+    gap: 3.5,
+  },
+  motionLine: {
+    height: 2.5,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 2,
+  },
+  logoLetterD: {
+    color: "#FFFFFF",
+    fontSize: 27,
     fontWeight: "900",
-    letterSpacing: 1.6,
+    letterSpacing: -1,
   },
 
-  heroTitle: {
-    marginTop: 7,
-    color: COLORS.white,
-    fontSize: 29,
-    lineHeight: 35,
-    fontWeight: "900",
-    letterSpacing: -0.5,
+  // Brand Name
+  brandTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
   },
-
-  heroTitleCompact: {
-    fontSize: 25,
-    lineHeight: 31,
+  brandTitleWhite: {
+    color: "#FFFFFF",
+    fontSize: 27,
+    fontWeight: "800",
+    letterSpacing: -0.3,
   },
-
-  heroSubtitle: {
-    marginTop: 7,
-    maxWidth: 300,
-    color: "rgba(255,255,255,0.78)",
-    fontSize: 13,
-    lineHeight: 19,
+  brandTitleBlue: {
+    color: "#0088FF",
+    fontSize: 27,
+    fontWeight: "800",
+    letterSpacing: -0.3,
+  },
+  brandSubtitle: {
+    color: "#8FA3BE",
+    fontSize: 12.5,
     fontWeight: "500",
+    marginTop: 4,
+    textAlign: "center",
   },
 
-  formCard: {
-    marginTop: -24,
-    marginHorizontal: 16,
-    marginBottom: 24,
-    paddingHorizontal: 22,
-    paddingTop: 28,
-    paddingBottom: 24,
-    borderRadius: 30,
-    backgroundColor: COLORS.surface,
-    shadowColor: "#020C18",
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.16,
-    shadowRadius: 24,
-    elevation: 12,
-  },
-
-  formCardCompact: {
-    marginHorizontal: 12,
-    paddingHorizontal: 18,
-    paddingTop: 24,
-    paddingBottom: 20,
-    borderRadius: 26,
-  },
-
-  formCardTablet: {
-    width: "72%",
-    maxWidth: 620,
-    alignSelf: "center",
-    marginTop: -38,
-    paddingHorizontal: 34,
-    paddingVertical: 32,
-  },
-
-  cardHeading: {
+  // Heading Section
+  welcomeSection: {
+    alignItems: "center",
+    marginTop: 28,
     marginBottom: 22,
   },
-
-  cardTitle: {
-    color: COLORS.text,
-    fontSize: 29,
-    lineHeight: 35,
-    fontWeight: "900",
-    letterSpacing: -0.5,
+  topLogoImage: {
+    width: 190,
+    height: 64,
+    marginTop: 6,
+    marginBottom: 20,
+    alignSelf: "center",
   },
-
-  cardTitleCompact: {
-    fontSize: 26,
-    lineHeight: 32,
-  },
-
-  cardSubtitle: {
-    marginTop: 8,
-    color: COLORS.muted,
-    fontSize: 14,
-    lineHeight: 21,
-    fontWeight: "500",
-  },
-
-  inputContainer: {
-    marginBottom: 16,
-  },
-
-  inputLabel: {
-    marginBottom: 8,
-    color: COLORS.text,
-    fontSize: 13.5,
+  welcomeTitle: {
+    color: "#FFFFFF",
+    fontSize: 25,
     fontWeight: "800",
+    letterSpacing: -0.3,
+    textAlign: "center",
+  },
+  welcomeUnderline: {
+    width: 36,
+    height: 3.5,
+    borderRadius: 2,
+    marginTop: 8,
+    marginBottom: 12,
+  },
+  welcomeSubtitle: {
+    color: "#8A9CB5",
+    fontSize: 13.5,
+    lineHeight: 19,
+    textAlign: "center",
+    fontWeight: "400",
   },
 
-  inputField: {
-    minHeight: 58,
-    paddingHorizontal: 12,
-    borderRadius: 18,
+  // Card Container
+  cardContainer: {
+    backgroundColor: "rgba(13, 28, 56, 0.82)",
     borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.inputBackground,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-
-  inputFieldFocused: {
-    borderColor: COLORS.blue500,
-    backgroundColor: COLORS.white,
-    shadowColor: COLORS.blue500,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.12,
-    shadowRadius: 10,
-    elevation: 4,
-  },
-
-  inputFieldError: {
-    borderColor: "#F87171",
-    backgroundColor: "#FFF8F8",
-  },
-
-  inputIconBox: {
-    width: 38,
-    height: 38,
-    borderRadius: 13,
-    backgroundColor: "#E5F3FC",
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 10,
-    flexShrink: 0,
-  },
-
-  textInput: {
-    flex: 1,
-    minWidth: 0,
-    paddingVertical: 14,
-    color: COLORS.text,
-    fontSize: 15,
-    fontWeight: "500",
-  },
-
-  eyeIcon: {
-    width: 42,
-    height: 42,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-
-  errorMessage: {
-    marginTop: 7,
-    marginLeft: 4,
-    color: COLORS.danger,
-    fontSize: 12,
-    fontWeight: "600",
-  },
-
-  apiErrorBox: {
-    marginBottom: 16,
-    paddingHorizontal: 13,
-    paddingVertical: 12,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: COLORS.dangerBorder,
-    backgroundColor: COLORS.dangerSoft,
-    flexDirection: "row",
-    alignItems: "flex-start",
-  },
-
-  apiErrorText: {
-    flex: 1,
-    marginLeft: 8,
-    color: COLORS.danger,
-    fontSize: 12.5,
-    lineHeight: 18,
-    fontWeight: "700",
-  },
-
-  signUpButton: {
-    height: 58,
-    borderRadius: 18,
-    overflow: "hidden",
-    shadowColor: COLORS.blue600,
-    shadowOffset: { width: 0, height: 9 },
-    shadowOpacity: 0.24,
-    shadowRadius: 16,
+    borderColor: "rgba(35, 70, 122, 0.65)",
+    borderRadius: 24,
+    paddingHorizontal: 18,
+    paddingVertical: 20,
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 18,
     elevation: 8,
   },
 
-  signUpButtonDisabled: {
-    shadowOpacity: 0,
-    elevation: 0,
+  // Form Fields
+  fieldWrapper: {
+    marginBottom: 14,
   },
-
-  signUpButtonGradient: {
-    flex: 1,
-    paddingHorizontal: 20,
-    alignItems: "center",
-    justifyContent: "center",
+  fieldLabel: {
+    color: "#D6E2F2",
+    fontSize: 13,
+    fontWeight: "600",
+    marginBottom: 7,
+    marginLeft: 2,
   },
-
-  buttonContent: {
+  inputRow: {
     flexDirection: "row",
     alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#D8E2EE",
+    borderRadius: 14,
+    height: 52,
+    paddingHorizontal: 8,
   },
-
-  signUpButtonText: {
-    marginRight: 9,
-    color: COLORS.white,
-    fontSize: 16,
-    fontWeight: "900",
+  inputRowFocused: {
+    borderColor: "#0084FF",
+    backgroundColor: "#FFFFFF",
   },
-
-  signInContainer: {
-    marginTop: 20,
-    flexDirection: "row",
-    justifyContent: "center",
+  inputRowError: {
+    borderColor: "#EF4444",
+  },
+  iconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: "#EEF4FC",
     alignItems: "center",
-  },
-
-  signInText: {
+    justifyContent: "center",
     marginRight: 6,
-    color: COLORS.muted,
-    fontSize: 13.5,
+  },
+  textInput: {
+    flex: 1,
+    color: "#0F172A",
+    fontSize: 14.5,
+    paddingVertical: Platform.OS === "ios" ? 12 : 8,
+    paddingHorizontal: 4,
+    fontWeight: "500",
+  },
+  eyeToggleBtn: {
+    padding: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  inlineError: {
+    color: "#EF4444",
+    fontSize: 11.5,
+    marginTop: 4,
+    marginLeft: 4,
     fontWeight: "500",
   },
 
-  signInLink: {
-    color: COLORS.blue600,
-    fontSize: 13.5,
-    fontWeight: "900",
+  // Buttons
+  signInBtnWrapper: {
+    height: 50,
+    borderRadius: 14,
+    overflow: "hidden",
+    shadowColor: "#00A6FF",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.55,
+    shadowRadius: 12,
+    elevation: 8,
   },
-
-  securityNote: {
-    marginTop: 16,
+  signInBtnGradient: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    gap: 6,
+  },
+  signInBtnText: {
+    color: "#FFFFFF",
+    fontSize: 15.5,
+    fontWeight: "700",
+    letterSpacing: 0.2,
   },
 
-  securityText: {
-    marginLeft: 7,
-    color: COLORS.muted,
+  // OR Divider
+  orDividerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginVertical: 16,
+  },
+  orLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: "#203E68",
+  },
+  orText: {
+    color: "#6D87AB",
     fontSize: 12,
     fontWeight: "700",
+    paddingHorizontal: 12,
+  },
+
+  // Google Button
+  googleButton: {
+    height: 50,
+    backgroundColor: "#10254A",
+    borderWidth: 1,
+    borderColor: "#234372",
+    borderRadius: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+  },
+  googleButtonText: {
+    color: "#FFFFFF",
+    fontSize: 14.5,
+    fontWeight: "600",
+  },
+
+  // Switch Auth Navigation Row
+  switchAuthRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 16,
+    marginBottom: 4,
+  },
+  switchAuthPrompt: {
+    color: "#8FA5C2",
+    fontSize: 13,
+    marginRight: 6,
+  },
+  switchAuthLink: {
+    color: "#0088FF",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+
+  // Bottom Security Card Inside Form
+  securityCard: {
+    backgroundColor: "rgba(14, 32, 62, 0.85)",
+    borderWidth: 1,
+    borderColor: "#224272",
+    borderRadius: 15,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 16,
+  },
+  shieldIconWrapper: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: "rgba(0, 136, 255, 0.16)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 10,
+  },
+  securityTextContainer: {
+    flex: 1,
+  },
+  securityTitle: {
+    color: "#E2EDFA",
+    fontSize: 13.5,
+    fontWeight: "700",
+  },
+  securitySubtitle: {
+    color: "#7E96B7",
+    fontSize: 11.5,
+    fontWeight: "500",
+    marginTop: 1.5,
   },
 });

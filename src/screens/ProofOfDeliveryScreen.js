@@ -43,7 +43,7 @@ export default function ProofOfDeliveryScreen({ navigation, route }) {
       return;
     }
 
-    navigation.navigate("Signature", {
+    navigation.navigate("CompleteJob", {
       type: "complete",
       jobId: route?.params?.jobId,
       photo,

@@ -128,12 +128,12 @@ export default function JobCompletionTermsScreen({ navigation, route }) {
       return;
     }
 
-    if (!driverName.trim() && !driverProfileName.trim()) {
+    if (!driverName.trim()) {
       Alert.alert("Driver name required", "Please enter your name before continuing.");
       return;
     }
 
-    navigation.navigate("Signature", {
+    navigation.navigate("CompleteJob", {
       type: "complete",
       jobId,
       job,
@@ -144,7 +144,7 @@ export default function JobCompletionTermsScreen({ navigation, route }) {
       stairsWaiverAccepted,
       customerSignatureName: customerSignatureName.trim(),
       customerSignatureDate: customerSignatureDate.trim(),
-      driverName: driverName.trim() || driverProfileName.trim(),
+      driverName: driverName.trim(),
     });
   };
 
@@ -159,31 +159,35 @@ export default function JobCompletionTermsScreen({ navigation, route }) {
     !!driverName.trim();
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor="#0B2545" />
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" translucent={false} />
 
-      <View style={styles.headerWrap}>
-        <LinearGradient
-          colors={["#0B2545", "#134074", "#0077B6"]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={[styles.headerGradient, { paddingTop: Math.max(insets.top, 16) + 12 }]}
-        >
-          <View style={styles.headerRow}>
-            <TouchableOpacity
-              style={styles.backBtn}
-              onPress={() => navigation.goBack()}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <AppIcon library="Ionicons" name="arrow-back" size={24} color="#FFF" />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>Job Completion Terms</Text>
-            <View style={styles.headerRightSpacer} />
+      {/* Header */}
+      <View style={styles.header}>
+        <View style={styles.headerRow}>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => navigation.goBack()}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <AppIcon library="Ionicons" name="chevron-back" size={22} color="#0F172A" />
+          </TouchableOpacity>
+          <View style={styles.headerTitleContainer}>
+            <Text style={styles.headerTitle} numberOfLines={1}>
+              Job Completion Terms
+            </Text>
+            <Text style={styles.headerSubtitle} numberOfLines={1}>
+              Job ID: #{jobReference}
+            </Text>
           </View>
-        </LinearGradient>
+        </View>
       </View>
 
       <ScrollView
+        style={{ flex: 1, backgroundColor: "#F4F6FA" }}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: 40 + insets.bottom }]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
@@ -389,7 +393,7 @@ export default function JobCompletionTermsScreen({ navigation, route }) {
               style={styles.input}
               placeholder="Driver name"
               placeholderTextColor="#94A3B8"
-              value={driverName || driverProfileName}
+              value={driverName}
               onChangeText={setDriverName}
             />
           </View>
@@ -412,50 +416,52 @@ export default function JobCompletionTermsScreen({ navigation, route }) {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: "#F4F6FA",
+    backgroundColor: "#FFFFFF",
   },
-  headerWrap: {
-    marginHorizontal: 16,
-    marginTop: 10,
-    borderRadius: 24,
-    overflow: "hidden",
-    shadowColor: "#0B2545",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.18,
-    shadowRadius: 10,
-    elevation: 5,
-    zIndex: 10,
-  },
-  headerGradient: {
+  header: {
+    width: "100%",
+    backgroundColor: "#FFFFFF",
     paddingHorizontal: 16,
-    paddingBottom: 18,
     paddingTop: 12,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E2E8F0",
   },
   headerRow: {
+    width: "100%",
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    minHeight: 44,
+    minHeight: 40,
   },
   backBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: "#F1F5F9",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.16)",
+    marginRight: 12,
+    flexShrink: 0,
   },
-  headerRightSpacer: {
-    width: 36,
+  headerTitleContainer: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: "center",
   },
   headerTitle: {
-    flex: 1,
-    marginLeft: 10,
-    textAlign: "left",
-    fontSize: 18,
-    fontWeight: "900",
-    color: "#FFFFFF",
-    letterSpacing: 0.2,
+    color: "#0F172A",
+    fontSize: 20,
+    fontWeight: "800",
+    lineHeight: 23,
+  },
+  headerSubtitle: {
+    color: "#64748B",
+    fontSize: 11,
+    fontWeight: "600",
+    lineHeight: 15,
+    marginTop: 1,
   },
   scrollContent: {
     padding: 16,

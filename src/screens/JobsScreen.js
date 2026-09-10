@@ -15,6 +15,7 @@ import EmptyState from "../components/EmptyState";
 import LoadingSpinner from "../components/LoadingSpinner";
 import AppIcon from "../components/common/AppIcon";
 import API from "../services/api";
+import { getDriverVisiblePriceInfo } from "../utils/jobHelpers";
 
 // ── Design tokens (matches HomeScreen & ProfileScreen) ──────
 const C = {
@@ -88,7 +89,10 @@ const getStatusStyle = (status) => {
 const normalizeJob = (job) => {
   const status = normalizeStatus(job.status);
   const statusStyle = getStatusStyle(status);
+  const priceInfo = getDriverVisiblePriceInfo(job);
+
   return {
+    raw: job,
     id: job.jobNumber || job._id,
     backendId: job._id,
     time:
@@ -111,7 +115,10 @@ const normalizeJob = (job) => {
     statusLabel: statusStyle.label,
     rawStatus: job.status,
     distance: job.distance || (job.estimatedHours ? `${job.estimatedHours || ""}h` : ""),
-    earnings: "",
+    showPriceToDriver: priceInfo.showPriceToDriver,
+    driverPrice: priceInfo.driverPrice,
+    formattedPrice: priceInfo.formattedPrice,
+    canShowPrice: priceInfo.canShowPrice,
   };
 };
 
@@ -195,10 +202,17 @@ export default function JobsScreen({ navigation }) {
               <Text style={styles.jobTime}>{item.time}</Text>
             </View>
           </View>
-          <View style={[styles.badge, { backgroundColor: statusStyle.bg }]}>
-            <Text style={[styles.badgeText, { color: statusStyle.text }]}>
-              {item.statusLabel}
-            </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            {item.canShowPrice ? (
+              <View style={styles.priceBadge}>
+                <Text style={styles.priceBadgeText}>{item.formattedPrice}</Text>
+              </View>
+            ) : null}
+            <View style={[styles.badge, { backgroundColor: statusStyle.bg }]}>
+              <Text style={[styles.badgeText, { color: statusStyle.text }]}>
+                {item.statusLabel}
+              </Text>
+            </View>
           </View>
         </View>
 
@@ -288,93 +302,56 @@ export default function JobsScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
       <StatusBar
-        barStyle="light-content"
-        backgroundColor={C.navy}
+        barStyle="dark-content"
+        backgroundColor={C.bg}
         translucent={false}
       />
 
-      <View
-        style={[
-          styles.header,
-          isCompactPhone && styles.headerCompact,
-        ]}
-      >
-        <View
-          pointerEvents="none"
-          style={styles.headerDecorLarge}
-        />
-        <View
-          pointerEvents="none"
-          style={styles.headerDecorSmall}
-        />
-
+      {/* ── Simple Header ── */}
+      <View style={styles.header}>
         <View style={styles.headerTopRow}>
-          <View style={styles.headerTitleBlock}>
-            <Text style={styles.headerEyebrow}>ASSIGNMENTS</Text>
-            <Text
-              style={[
-                styles.headerTitle,
-                isCompactPhone && styles.headerTitleCompact,
-              ]}
-              numberOfLines={1}
-            >
-              My Jobs
-            </Text>
-            <Text
-              style={styles.headerSubtitle}
-              numberOfLines={2}
-            >
-              Track your assigned and active jobs
-            </Text>
-          </View>
-
-          <View style={styles.jobCountPill}>
-            <Text style={styles.jobCountNumber}>
-              {filteredJobs.length}
-            </Text>
-            <Text style={styles.jobCountText}>
-              {filteredJobs.length === 1 ? "JOB" : "JOBS"}
-            </Text>
+          <Text style={styles.headerTitle}>My Jobs</Text>
+          <View style={styles.jobCountBadge}>
+            <Text style={styles.jobCountBadgeText}>{jobs.length} Jobs</Text>
           </View>
         </View>
 
-        <View style={styles.searchWrap}>
-          <View style={styles.searchBox}>
-            <View style={styles.searchIconWrap}>
-              <AppIcon
-                library="Feather"
-                name="search"
-                size={18}
-                color={C.blue}
-              />
-            </View>
-
-            <TextInput
-              value={search}
-              onChangeText={setSearch}
-              placeholder="Search job, customer, location..."
-              placeholderTextColor={C.textMuted}
-              style={styles.searchInput}
-              returnKeyType="search"
-              autoCorrect={false}
+        {/* ── Search Bar ── */}
+        <View style={styles.searchBox}>
+          <View style={styles.searchIconWrap}>
+            <AppIcon
+              library="Feather"
+              name="search"
+              size={18}
+              color={C.blue}
             />
-
-            {search ? (
-              <TouchableOpacity
-                style={styles.clearSearchButton}
-                onPress={() => setSearch("")}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                activeOpacity={0.75}
-              >
-                <AppIcon
-                  library="Ionicons"
-                  name="close"
-                  size={17}
-                  color={C.textSecondary}
-                />
-              </TouchableOpacity>
-            ) : null}
           </View>
+
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Search job, customer, location..."
+            placeholderTextColor={C.textMuted}
+            style={styles.searchInput}
+            returnKeyType="search"
+            autoCorrect={false}
+          />
+
+          {search ? (
+            <TouchableOpacity
+              style={styles.clearSearchButton}
+              onPress={() => setSearch("")}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              activeOpacity={0.75}
+            >
+              <AppIcon
+                library="Ionicons"
+                name="close"
+                size={17}
+                color={C.textSecondary}
+              />
+            </TouchableOpacity>
+          ) : null}
         </View>
       </View>
 
@@ -449,7 +426,7 @@ export default function JobsScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: C.navy,
+    backgroundColor: C.bg,
   },
   bodyWrap: {
     flex: 1,
@@ -458,128 +435,50 @@ const styles = StyleSheet.create({
 
   // ── Header ────────────────────────────────────────────────
   header: {
-    minHeight: 236,
-    backgroundColor: C.navy,
-    paddingHorizontal: 18,
-    paddingTop: 18,
-    paddingBottom: 18,
-    overflow: "hidden",
-    borderBottomLeftRadius: 30,
-    borderBottomRightRadius: 30,
-  },
-  headerCompact: {
-    minHeight: 226,
     paddingHorizontal: 16,
-  },
-  headerDecorLarge: {
-    position: "absolute",
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    right: -82,
-    top: -92,
-    backgroundColor: "rgba(2,132,199,0.24)",
-  },
-  headerDecorSmall: {
-    position: "absolute",
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    left: -36,
-    bottom: -42,
-    backgroundColor: "rgba(56,189,248,0.10)",
+    paddingTop: 14,
+    paddingBottom: 10,
+    backgroundColor: C.bg,
   },
   headerTopRow: {
-    minHeight: 104,
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "center",
     justifyContent: "space-between",
-  },
-  headerTitleBlock: {
-    flex: 1,
-    minWidth: 0,
-    paddingRight: 12,
-  },
-  headerEyebrow: {
-    fontSize: 11,
-    lineHeight: 15,
-    fontWeight: "800",
-    letterSpacing: 1.8,
-    color: "rgba(255,255,255,0.68)",
-    marginBottom: 7,
+    marginBottom: 12,
   },
   headerTitle: {
-    fontSize: 34,
-    lineHeight: 40,
-    fontWeight: "900",
-    color: C.white,
-    letterSpacing: -0.7,
-  },
-  headerTitleCompact: {
-    fontSize: 30,
-    lineHeight: 36,
-  },
-  headerSubtitle: {
-    marginTop: 6,
-    maxWidth: 245,
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: "500",
-    color: "rgba(255,255,255,0.72)",
-  },
-  jobCountPill: {
-    minWidth: 68,
-    minHeight: 62,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.24)",
-    backgroundColor: "rgba(255,255,255,0.12)",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  jobCountNumber: {
-    fontSize: 20,
-    lineHeight: 23,
-    fontWeight: "900",
-    color: C.white,
-  },
-  jobCountText: {
-    marginTop: 2,
-    fontSize: 9,
-    lineHeight: 12,
+    fontSize: 26,
     fontWeight: "800",
-    letterSpacing: 0.9,
-    color: "rgba(255,255,255,0.72)",
+    color: C.navy,
+    letterSpacing: -0.5,
+  },
+  jobCountBadge: {
+    backgroundColor: "#E0F2FE",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+  },
+  jobCountBadgeText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#0284C7",
   },
 
   // ── Search ────────────────────────────────────────────────
-  searchWrap: {
-    marginTop: 14,
-    width: "100%",
-    zIndex: 3,
-  },
   searchBox: {
-    minHeight: 54,
+    minHeight: 48,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: C.white,
-    borderRadius: 18,
+    borderRadius: 14,
     paddingHorizontal: 10,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.52)",
-    shadowColor: "#020617",
-    shadowOpacity: 0.14,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 7 },
-    elevation: 6,
+    borderColor: "rgba(15, 23, 42, 0.08)",
   },
   searchIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
+    width: 34,
+    height: 34,
+    borderRadius: 10,
     backgroundColor: "#EAF6FC",
     alignItems: "center",
     justifyContent: "center",
@@ -588,7 +487,7 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     minWidth: 0,
-    height: 52,
+    height: 46,
     marginLeft: 10,
     marginRight: 6,
     fontSize: 14,
@@ -596,9 +495,9 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
   },
   clearSearchButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 11,
+    width: 30,
+    height: 30,
+    borderRadius: 10,
     backgroundColor: "#F1F5F9",
     alignItems: "center",
     justifyContent: "center",
@@ -609,6 +508,7 @@ const styles = StyleSheet.create({
   filterScroll: {
     paddingHorizontal: 16,
     gap: 8,
+    paddingTop: 8,
     paddingBottom: 4,
   },
   chip: {
@@ -845,5 +745,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
     color: "#16A34A",
+  },
+  priceBadge: {
+    backgroundColor: "#DCFCE7",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#86EFAC",
+  },
+  priceBadgeText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#15803D",
   },
 });

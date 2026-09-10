@@ -12,7 +12,6 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
-import LinearGradient from "react-native-linear-gradient";
 
 import AppIcon from "../components/common/AppIcon";
 
@@ -211,81 +210,20 @@ export default function NotificationsScreen() {
       edges={["top", "left", "right"]}
     >
       <StatusBar
-        barStyle="light-content"
-        backgroundColor={COLORS.navy900}
+        barStyle="dark-content"
+        backgroundColor={COLORS.white}
         translucent={false}
       />
 
-      <LinearGradient
-        colors={[
-          COLORS.navy900,
-          COLORS.navy800,
-          COLORS.blue600,
-        ]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={[
-          styles.header,
-          isSmallPhone && styles.headerSmall,
-        ]}
-      >
-        <View
-          pointerEvents="none"
-          style={styles.decorCircleLarge}
-        />
-        <View
-          pointerEvents="none"
-          style={styles.decorCircleSmall}
-        />
-
+      {/* ── Simple White Header ── */}
+      <View style={styles.header}>
         <View style={styles.headerTopRow}>
           <View style={styles.headerCopy}>
-            <Text style={styles.eyebrow}>
-              ALERTS & ACTIVITY
-            </Text>
-
-            <Text style={styles.headerTitle}>
-              Notifications
-            </Text>
-
-            <Text
-              style={styles.headerSubtitle}
-              numberOfLines={2}
-            >
-              Stay updated with your job alerts and account activity.
-            </Text>
-          </View>
-
-          <View style={styles.headerBadge}>
-            <AppIcon
-              library="Ionicons"
-              name="notifications-outline"
-              size={21}
-              color={COLORS.white}
-            />
-
-            <Text style={styles.headerBadgeCount}>
-              {unreadCount}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.headerBottomRow}>
-          <View style={styles.summaryPill}>
-            <View
-              style={[
-                styles.summaryIndicator,
-                unreadCount === 0 &&
-                  styles.summaryIndicatorRead,
-              ]}
-            />
-
+            <Text style={styles.headerTitle}>Notifications</Text>
             <Text style={styles.summaryText}>
               {unreadCount > 0
                 ? `${unreadCount} unread ${
-                    unreadCount === 1
-                      ? "notification"
-                      : "notifications"
+                    unreadCount === 1 ? "notification" : "notifications"
                   }`
                 : "You are all caught up"}
             </Text>
@@ -294,8 +232,7 @@ export default function NotificationsScreen() {
           <TouchableOpacity
             style={[
               styles.markAllButton,
-              unreadCount === 0 &&
-                styles.markAllButtonDisabled,
+              unreadCount === 0 && styles.markAllButtonDisabled,
             ]}
             onPress={markAllRead}
             disabled={unreadCount === 0}
@@ -306,28 +243,20 @@ export default function NotificationsScreen() {
             <AppIcon
               library="MaterialCommunityIcons"
               name="check-all"
-              size={18}
-              color={
-                unreadCount === 0
-                  ? "rgba(255,255,255,0.45)"
-                  : COLORS.white
-              }
+              size={17}
+              color={unreadCount === 0 ? COLORS.subtle : COLORS.blue600}
             />
-
-            {!isSmallPhone ? (
-              <Text
-                style={[
-                  styles.markAllText,
-                  unreadCount === 0 &&
-                    styles.markAllTextDisabled,
-                ]}
-              >
-                Mark all read
-              </Text>
-            ) : null}
+            <Text
+              style={[
+                styles.markAllText,
+                unreadCount === 0 && styles.markAllTextDisabled,
+              ]}
+            >
+              Mark all read
+            </Text>
           </TouchableOpacity>
         </View>
-      </LinearGradient>
+      </View>
 
       <View style={styles.content}>
         <View style={styles.sectionHeader}>
@@ -391,181 +320,68 @@ export default function NotificationsScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: COLORS.navy900,
+    backgroundColor: COLORS.white,
   },
 
   header: {
-    minHeight: 238,
-    paddingHorizontal: 20,
-    paddingTop: 22,
-    paddingBottom: 24,
-    overflow: "hidden",
-    borderBottomLeftRadius: 30,
-    borderBottomRightRadius: 30,
-  },
-
-  headerSmall: {
-    minHeight: 224,
+    backgroundColor: COLORS.white,
     paddingHorizontal: 16,
-  },
-
-  decorCircleLarge: {
-    position: "absolute",
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    right: -88,
-    top: -84,
-    backgroundColor:
-      "rgba(56, 189, 248, 0.14)",
-  },
-
-  decorCircleSmall: {
-    position: "absolute",
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    left: -46,
-    bottom: -58,
-    backgroundColor:
-      "rgba(255, 255, 255, 0.06)",
+    paddingTop: 14,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
   },
 
   headerTopRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "center",
     justifyContent: "space-between",
-    zIndex: 2,
   },
 
   headerCopy: {
     flex: 1,
-    minWidth: 0,
-    paddingRight: 14,
-  },
-
-  eyebrow: {
-    color: "rgba(255,255,255,0.7)",
-    fontSize: 11,
-    fontWeight: "900",
-    letterSpacing: 1.7,
+    paddingRight: 12,
   },
 
   headerTitle: {
-    marginTop: 7,
-    color: COLORS.white,
-    fontSize: 31,
-    lineHeight: 37,
-    fontWeight: "900",
+    color: COLORS.text,
+    fontSize: 26,
+    fontWeight: "800",
     letterSpacing: -0.5,
   },
 
-  headerSubtitle: {
-    marginTop: 8,
-    color: "rgba(255,255,255,0.72)",
-    fontSize: 13.5,
-    lineHeight: 20,
-    fontWeight: "500",
-    maxWidth: 300,
-  },
-
-  headerBadge: {
-    minWidth: 56,
-    height: 50,
-    paddingHorizontal: 12,
-    borderRadius: 18,
-    backgroundColor:
-      "rgba(255,255,255,0.14)",
-    borderWidth: 1,
-    borderColor:
-      "rgba(255,255,255,0.22)",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 7,
-    flexShrink: 0,
-  },
-
-  headerBadgeCount: {
-    color: COLORS.white,
-    fontSize: 16,
-    fontWeight: "900",
-  },
-
-  headerBottomRow: {
-    marginTop: 25,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    zIndex: 2,
-  },
-
-  summaryPill: {
-    flex: 1,
-    minHeight: 45,
-    paddingHorizontal: 13,
-    borderRadius: 15,
-    backgroundColor:
-      "rgba(255,255,255,0.10)",
-    borderWidth: 1,
-    borderColor:
-      "rgba(255,255,255,0.14)",
-    flexDirection: "row",
-    alignItems: "center",
-  },
-
-  summaryIndicator: {
-    width: 9,
-    height: 9,
-    borderRadius: 5,
-    backgroundColor: "#38BDF8",
-    marginRight: 9,
-  },
-
-  summaryIndicatorRead: {
-    backgroundColor: "#4ADE80",
-  },
-
   summaryText: {
-    flex: 1,
-    color: "rgba(255,255,255,0.88)",
-    fontSize: 12.5,
-    lineHeight: 17,
-    fontWeight: "700",
+    marginTop: 2,
+    color: COLORS.muted,
+    fontSize: 13,
+    fontWeight: "500",
   },
 
   markAllButton: {
-    minHeight: 45,
-    paddingHorizontal: 14,
-    borderRadius: 15,
-    backgroundColor:
-      "rgba(255,255,255,0.14)",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 12,
+    backgroundColor: "#F0F7FF",
     borderWidth: 1,
-    borderColor:
-      "rgba(255,255,255,0.22)",
+    borderColor: "rgba(15, 111, 186, 0.15)",
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 7,
-    flexShrink: 0,
+    gap: 5,
   },
 
   markAllButtonDisabled: {
-    backgroundColor:
-      "rgba(255,255,255,0.07)",
-    borderColor:
-      "rgba(255,255,255,0.10)",
+    backgroundColor: "#F8FAFC",
+    borderColor: "rgba(148, 163, 184, 0.15)",
   },
 
   markAllText: {
-    color: COLORS.white,
+    color: COLORS.blue600,
     fontSize: 12,
-    fontWeight: "800",
+    fontWeight: "700",
   },
 
   markAllTextDisabled: {
-    color: "rgba(255,255,255,0.45)",
+    color: COLORS.subtle,
   },
 
   content: {
