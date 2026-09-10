@@ -1,4 +1,5 @@
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect, useCallback } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 import {
   View,
   Text,
@@ -87,34 +88,59 @@ const getStatusStyle = (status) => {
 };
 
 const normalizeJob = (job) => {
-  const status = normalizeStatus(job.status);
+  const status = normalizeStatus(job?.status);
   const statusStyle = getStatusStyle(status);
   const priceInfo = getDriverVisiblePriceInfo(job);
 
+  const rawPickup =
+    job?.pickupAddress ??
+    job?.pickupLocation ??
+    job?.pickup?.address ??
+    (typeof job?.pickup === "string" ? job.pickup : job?.pickup?.formattedAddress) ??
+    "";
+
+  const rawDrop =
+    job?.dropAddress ??
+    job?.dropoffAddress ??
+    job?.dropLocation ??
+    job?.dropoff?.address ??
+    (typeof job?.drop === "string" ? job.drop : (typeof job?.dropoff === "string" ? job.dropoff : job?.dropoff?.formattedAddress)) ??
+    "";
+
   return {
     raw: job,
-    id: job.jobNumber || job._id,
-    backendId: job._id,
+    id: job?.jobNumber || job?.jobReference || job?.referenceNumber || job?._id || "N/A",
+    backendId: job?._id,
     time:
-      job.scheduledTime ||
-      (job.scheduledDate
+      job?.scheduledTime ||
+      (job?.scheduledDate
         ? new Date(job.scheduledDate).toLocaleTimeString([], {
             hour: "2-digit",
             minute: "2-digit",
           })
         : ""),
-    name: job.customerName || job.customerId?.name || "",
-    phone: job.customerPhone || job.customerId?.phone || "",
-    pickup: job.pickupAddress || "",
-    drop: job.dropAddress || "",
-    jobType: job.jobType,
-    type: job.jobType
+    name:
+      job?.customerName ||
+      job?.customer?.name ||
+      job?.customerId?.name ||
+      job?.user?.name ||
+      "Customer",
+    phone:
+      job?.customerPhone ||
+      job?.customer?.phone ||
+      job?.customerId?.phone ||
+      job?.user?.phone ||
+      "",
+    pickup: typeof rawPickup === "string" ? rawPickup : "",
+    drop: typeof rawDrop === "string" ? rawDrop : "",
+    jobType: job?.jobType,
+    type: job?.jobType
       ? job.jobType.charAt(0).toUpperCase() + job.jobType.slice(1)
       : "Delivery",
     status,
     statusLabel: statusStyle.label,
-    rawStatus: job.status,
-    distance: job.distance || (job.estimatedHours ? `${job.estimatedHours || ""}h` : ""),
+    rawStatus: job?.status,
+    distance: job?.distance || (job?.estimatedHours ? `${job.estimatedHours || ""}h` : ""),
     showPriceToDriver: priceInfo.showPriceToDriver,
     driverPrice: priceInfo.driverPrice,
     formattedPrice: priceInfo.formattedPrice,
@@ -131,25 +157,34 @@ export default function JobsScreen({ navigation }) {
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const fetchJobs = async () => {
-      try {
-        const response = await API.get("/jobs/driver/my-jobs").catch(() => API.get("/jobs/my-jobs"));
-        const rawJobs =
-          response?.jobs ??
-          response?.data?.jobs ??
-          response?.data ??
-          (Array.isArray(response) ? response : []);
-        setJobs((Array.isArray(rawJobs) ? rawJobs : []).map(normalizeJob));
-      } catch (error) {
-        console.log("Failed to load jobs: ", error?.response?.data?.message || error?.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchJobs();
+  const fetchJobs = useCallback(async () => {
+    try {
+      const response = await API.get("/jobs/driver/my-jobs").catch(async () => {
+        return API.get("/jobs/my-jobs").catch(async () => {
+          return API.get("/jobs").catch(() => null);
+        });
+      });
+      const rawJobs =
+        response?.jobs ??
+        response?.data?.jobs ??
+        response?.bookings ??
+        response?.data?.bookings ??
+        response?.data ??
+        response?.results ??
+        (Array.isArray(response) ? response : []);
+      setJobs((Array.isArray(rawJobs) ? rawJobs : []).map(normalizeJob));
+    } catch (error) {
+      console.log("Failed to load jobs: ", error?.response?.data?.message || error?.message);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchJobs();
+    }, [fetchJobs])
+  );
 
   const filteredJobs = useMemo(() => {
     return jobs.filter((job) => {

@@ -203,32 +203,40 @@ const normaliseJob = (job) => {
   const type = getJobType(job);
   const priceInfo = getDriverVisiblePriceInfo(job);
 
+  const rawPickup =
+    job?.pickupAddress ??
+    job?.pickupLocation ??
+    job?.pickup?.address ??
+    (typeof job?.pickup === "string" ? job.pickup : job?.pickup?.formattedAddress) ??
+    "Pickup address not available";
+
+  const rawDropoff =
+    job?.dropoffAddress ??
+    job?.dropAddress ??
+    job?.dropLocation ??
+    job?.dropoff?.address ??
+    (typeof job?.drop === "string" ? job.drop : (typeof job?.dropoff === "string" ? job.dropoff : job?.dropoff?.formattedAddress)) ??
+    "Drop-off address not available";
+
   return {
     raw: job,
-    id: job?.jobNumber ?? job?.jobReference ?? job?._id,
+    id: job?.jobNumber ?? job?.jobReference ?? job?.referenceNumber ?? job?._id ?? "N/A",
     backendId: job?._id,
     status,
     customerName:
       job?.customerName ??
-      job?.customerId?.name ??
       job?.customer?.name ??
+      job?.customerId?.name ??
+      job?.user?.name ??
       "Customer",
     customerPhone:
       job?.customerPhone ??
-      job?.customerId?.phone ??
       job?.customer?.phone ??
+      job?.customerId?.phone ??
+      job?.user?.phone ??
       "",
-    pickup:
-      job?.pickupAddress ??
-      job?.pickup?.address ??
-      job?.pickup ??
-      "Pickup address not available",
-    dropoff:
-      job?.dropoffAddress ??
-      job?.dropAddress ??
-      job?.dropoff?.address ??
-      job?.drop ??
-      "Drop-off address not available",
+    pickup: typeof rawPickup === "string" ? rawPickup : "Pickup address not available",
+    dropoff: typeof rawDropoff === "string" ? rawDropoff : "Drop-off address not available",
     time: formatScheduledTime(job),
     type,
     showPriceToDriver: priceInfo.showPriceToDriver,
@@ -770,9 +778,11 @@ const HomeScreen = ({ navigation }) => {
             }
             return null;
           }),
-          API.get("/jobs/driver/my-jobs").catch((err) => {
+          API.get("/jobs/driver/my-jobs").catch(async (err) => {
             console.log("[Home] /jobs/driver/my-jobs error:", err?.response?.status, err?.message);
-            return API.get("/jobs/my-jobs").catch(() => null);
+            return API.get("/jobs/my-jobs").catch(async () => {
+              return API.get("/jobs").catch(() => null);
+            });
           }),
           API.get("/notifications?limit=1").catch(
             () => null
@@ -799,7 +809,10 @@ const HomeScreen = ({ navigation }) => {
         const rawJobs =
           jobsResponse?.jobs ??
           jobsResponse?.data?.jobs ??
+          jobsResponse?.bookings ??
+          jobsResponse?.data?.bookings ??
           jobsResponse?.data ??
+          jobsResponse?.results ??
           (Array.isArray(jobsResponse) ? jobsResponse : []);
 
         const normalisedJobs = (Array.isArray(rawJobs) ? rawJobs : [])
