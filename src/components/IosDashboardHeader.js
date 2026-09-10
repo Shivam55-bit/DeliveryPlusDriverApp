@@ -106,7 +106,7 @@ const IosDashboardHeader = memo(
       profile?.driver?.fullName ??
       profile?.user?.name ??
       profile?.user?.fullName ??
-      (profile?.email ? profile.email.split("@")[0] : "") ||
+      profile?.email?.split("@")[0] ??
       "Driver";
 
     const displayName = String(rawName).trim() || "Driver";
