@@ -173,10 +173,15 @@ export default function SignInScreen({ navigation }) {
           password,
         });
       } catch (err) {
-        response = await API.post("/auth/login", {
-          email: cleanEmail,
-          password,
-        });
+        // Only fallback if endpoint /auth/login/driver does not exist (404)
+        if (err?.response?.status === 404) {
+          response = await API.post("/auth/login", {
+            email: cleanEmail,
+            password,
+          });
+        } else {
+          throw err;
+        }
       }
 
       const payload = response?.data ?? response;
@@ -203,11 +208,16 @@ export default function SignInScreen({ navigation }) {
 
       navigation.replace("Home");
     } catch (error) {
-      const message =
+      let message =
         error?.response?.data?.message ||
         error?.response?.data?.error ||
         error?.message ||
         "Incorrect email or password. Please try again.";
+
+      if (error?.response?.status === 429) {
+        message = "Server rate-limit: Please wait 3-4 minutes or switch to mobile hotspot/Wi-Fi to try immediately.";
+      }
+
       Alert.alert("Unable to Sign In", message);
     } finally {
       setLoading(false);
