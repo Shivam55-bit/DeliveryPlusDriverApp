@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "675113703327",
+    "project_id": "delivery-plus-driver",
+    "storage_bucket": "delivery-plus-driver.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:675113703327:android:3e02f92414777d1ad30faa",
+        "android_client_info": {
+          "package_name": "com.deliveryplusdriverapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB5wcz1OLryNI7RG-tBQS2xmGQOOvGgAO0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
