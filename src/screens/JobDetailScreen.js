@@ -127,8 +127,9 @@ export default function JobDetailScreen({ route, navigation }) {
     navigation.navigate("StartJobAgreement", {
       jobId,
       job,
-      onJobStarted: (updatedJob) => {
+      onJobStarted: async (updatedJob) => {
         if (updatedJob) setJob(normalizeJob(updatedJob, currentUser));
+        await fetchJobDetails();
       },
     });
   };
@@ -398,12 +399,10 @@ export default function JobDetailScreen({ route, navigation }) {
                       <Text style={styles.breakdownLabel}>Base Cost</Text>
                       <Text style={styles.breakdownValue}>{driverEarnings.formattedBaseAmount}</Text>
                     </View>
-                    {driverEarnings.calloutFee > 0 ? (
-                      <View style={styles.breakdownRow}>
-                        <Text style={styles.breakdownLabel}>Callout Charge</Text>
-                        <Text style={styles.breakdownValue}>{driverEarnings.formattedCalloutFee}</Text>
-                      </View>
-                    ) : null}
+                    <View style={styles.breakdownRow}>
+                      <Text style={styles.breakdownLabel}>Callout Charge</Text>
+                      <Text style={styles.breakdownValue}>{driverEarnings.formattedCalloutFee}</Text>
+                    </View>
                     {driverEarnings.stairsFee > 0 ? (
                       <View style={styles.breakdownRow}>
                         <Text style={styles.breakdownLabel}>Stairs Fee</Text>
@@ -685,18 +684,16 @@ export default function JobDetailScreen({ route, navigation }) {
                     </Text>
                   </View>
 
-                  {driverEarnings.calloutFee > 0 ? (
-                    <View style={styles.pricingItem}>
-                      <Text style={styles.pricingLabel}>Callout</Text>
-                      <Text style={styles.pricingValue}>
-                        {driverEarnings.formattedCalloutFee}
-                      </Text>
-                    </View>
-                  ) : null}
+                  <View style={styles.pricingItem}>
+                    <Text style={styles.pricingLabel}>Callout Charge</Text>
+                    <Text style={styles.pricingValue}>
+                      {driverEarnings.formattedCalloutFee}
+                    </Text>
+                  </View>
 
                   {driverEarnings.stairsFee > 0 ? (
                     <View style={styles.pricingItem}>
-                      <Text style={styles.pricingLabel}>Stairs</Text>
+                      <Text style={styles.pricingLabel}>Stairs Fee</Text>
                       <Text style={styles.pricingValue}>
                         {driverEarnings.formattedStairsFee}
                       </Text>
@@ -752,7 +749,10 @@ export default function JobDetailScreen({ route, navigation }) {
         </View>
 
         {/* ── Start Agreement Evidence (Read-Only) ── */}
-        {(myAssignment.startAgreement || job.startAgreement) ? (
+        {(
+          (myAssignment?.startAgreement && (myAssignment?.isInProgress || myAssignment?.isCompleted || myAssignment?.startedAt)) ||
+          (job?.startAgreement && (myAssignment?.isInProgress || myAssignment?.isCompleted || job?.status === "in_progress" || job?.status === "completed"))
+        ) ? (
           <View style={styles.card}>
             <View style={styles.evidenceHeaderRow}>
               <View style={styles.evidenceHeaderLeft}>

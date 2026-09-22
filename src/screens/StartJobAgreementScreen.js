@@ -195,21 +195,51 @@ export default function StartJobAgreementScreen({ navigation, route }) {
       const updatedRaw =
         response?.job || response?.data?.job || response?.data || response;
 
+      // Authoritative refresh: fetch fresh complete job from backend
+      let authoritativeJobData = null;
+      try {
+        const getFreshRes = await API.get(`/jobs/${jobId}`);
+        authoritativeJobData =
+          getFreshRes?.job || getFreshRes?.data?.job || getFreshRes?.data || getFreshRes;
+      } catch (getErr) {
+        console.warn("[StartJob] Could not refetch job after start, using merged fallback:", getErr?.message);
+      }
+
       let normalizedUpdatedJob = null;
-      if (updatedRaw && typeof updatedRaw === "object") {
-        const merged = {
-          ...job,
-          ...Object.fromEntries(
-            Object.entries(updatedRaw).filter(
-              ([, value]) => value !== undefined && value !== null
-            )
-          ),
-          status: updatedRaw.status || "in_progress",
-          startedAt:
-            updatedRaw.startedAt ||
-            updatedRaw.jobStartedAt ||
-            updatedRaw.actualStartTime ||
-            new Date().toISOString(),
+      const baseRaw = authoritativeJobData || job?.raw || job || {};
+      const startedAt =
+        updatedRaw?.startedAt ||
+        authoritativeJobData?.startedAt ||
+        authoritativeJobData?.jobStartedAt ||
+        updatedRaw?.jobStartedAt ||
+        new Date().toISOString();
+
+      const merged = {
+        ...job,
+        ...baseRaw,
+        status: "in_progress",
+        startedAt,
+        pricing: {
+          ...(job?.pricing || {}),
+          ...(job?.raw?.pricing || {}),
+          ...(baseRaw?.pricing || {}),
+          ...(updatedRaw?.pricing || {}),
+        },
+        billing: {
+          ...(job?.billing || {}),
+          ...(job?.raw?.billing || {}),
+          ...(baseRaw?.billing || {}),
+          ...(updatedRaw?.billing || {}),
+        },
+        myAssignment: {
+          ...(job?.myAssignment || {}),
+          ...(baseRaw?.myAssignment || {}),
+          ...(updatedRaw?.myAssignment || {}),
+          status: "in_progress",
+          isInProgress: true,
+          isPending: false,
+          isCompleted: false,
+          startedAt,
           startAgreement: {
             termsRead: true,
             termsAccepted: true,
@@ -218,12 +248,26 @@ export default function StartJobAgreementScreen({ navigation, route }) {
             customerSignature,
             customerSignatureName: customerSignatureName.trim(),
             agreementVersion: "1.0",
-            acceptedAt: updatedRaw.startedAt || new Date().toISOString(),
-            ...(updatedRaw.startAgreement || {}),
+            acceptedAt: startedAt,
+            ...(updatedRaw?.startAgreement || {}),
+            ...(baseRaw?.startAgreement || {}),
           },
-        };
-        normalizedUpdatedJob = normalizeJob(merged, user);
-      }
+        },
+        startAgreement: {
+          termsRead: true,
+          termsAccepted: true,
+          stairsAtProperty,
+          stairsOption,
+          customerSignature,
+          customerSignatureName: customerSignatureName.trim(),
+          agreementVersion: "1.0",
+          acceptedAt: startedAt,
+          ...(updatedRaw?.startAgreement || {}),
+          ...(baseRaw?.startAgreement || {}),
+        },
+      };
+
+      normalizedUpdatedJob = normalizeJob(merged, user);
 
       setSubmitting(false);
       Alert.alert(

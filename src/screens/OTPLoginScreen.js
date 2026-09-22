@@ -92,6 +92,16 @@ export default function OTPLoginScreen({ navigation }) {
               </>
             )}
 
+            <TouchableOpacity
+              style={[styles.button, { backgroundColor: "rgba(47, 128, 237, 0.12)", borderWidth: 1, borderColor: "#2F80ED", marginTop: 14 }]}
+              onPress={async () => {
+                await setAuthToken("mock-test-driver-token", { id: "test-driver-001", name: "Test Driver", phone: "9876543210" });
+                navigation.replace("Home");
+              }}
+            >
+              <Text style={[styles.buttonText, { color: "#2F80ED" }]}>Skip Login for Testing →</Text>
+            </TouchableOpacity>
+
             <TouchableOpacity style={styles.link} onPress={() => navigation.goBack()}>
               <Text style={styles.linkText}>Use Email / Password instead</Text>
             </TouchableOpacity>

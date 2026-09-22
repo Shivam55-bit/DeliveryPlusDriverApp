@@ -277,5 +277,525 @@ describe("Driver Pricing Logic", () => {
       expect(completeSummary.amountToCollect).toBe(300);
       expect(completeSummary.formattedAmountToCollect).toBe("$300.00");
     });
+
+    test("16. JOB-00106 ($1600): Before Start and After Start (Timer 00:35:35) pricing remains $1600", () => {
+      const job106 = {
+        _id: "job_106_id",
+        jobNumber: "JOB-00106",
+        jobType: "moving",
+        status: "assigned",
+        showDriverPrice: true,
+        driverPriceType: "hourly",
+        hourlyRate: 1000,
+        estimatedHours: 1,
+        minimumCost: 1000,
+        calloutCharge: 500,
+        stairsFee: 100,
+        travelBackFee: 0,
+        minimumEstimatedCost: 1600,
+      };
+
+      // Before start
+      const normBefore = normalizeJob(job106, { _id: "driver_1" });
+      expect(normBefore.formattedPrice).toBe("$1600.00");
+      expect(normBefore.driverPrice).toBe(1600);
+
+      const pricingBefore = calculateDriverHourlyEarnings(normBefore.myAssignment, job106);
+      expect(pricingBefore.calloutFee).toBe(500);
+      expect(pricingBefore.stairsFee).toBe(100);
+      expect(pricingBefore.estimatedTotal).toBe(1600);
+      expect(pricingBefore.formattedEstimatedTotal).toBe("$1600.00");
+
+      // After Start Job (status: in_progress, timer at 35 mins elapsed)
+      const inProgressAssignment = {
+        ...normBefore.myAssignment,
+        status: "in_progress",
+        isInProgress: true,
+        isPending: false,
+        startedAt: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
+        totalWorkedMinutes: 35,
+      };
+
+      const normAfter = normalizeJob(
+        { ...job106, status: "in_progress", startedAt: inProgressAssignment.startedAt, myAssignment: inProgressAssignment },
+        { _id: "driver_1" }
+      );
+
+      // Must remain $1600, NOT drop to $1000 or $1100!
+      expect(normAfter.formattedPrice).toBe("$1600.00");
+      expect(normAfter.driverPrice).toBe(1600);
+
+      const pricingAfter = calculateDriverHourlyEarnings(inProgressAssignment, job106);
+      expect(pricingAfter.calloutFee).toBe(500);
+      expect(pricingAfter.stairsFee).toBe(100);
+      expect(pricingAfter.estimatedTotal).toBe(1600);
+      expect(pricingAfter.formattedEstimatedTotal).toBe("$1600.00");
+      expect(pricingAfter.overtimeMinutes).toBe(0);
+      expect(pricingAfter.overtimeAmount).toBe(0);
+    });
+
+    test("17. JOB-00106 Overtime Steps: 60m ($1600), 61m ($2100), 90m ($2100), 91m ($2600)", () => {
+      const job106 = {
+        _id: "job_106_id",
+        jobNumber: "JOB-00106",
+        jobType: "moving",
+        status: "in_progress",
+        showDriverPrice: true,
+        driverPriceType: "hourly",
+        hourlyRate: 1000,
+        estimatedHours: 1,
+        minimumCost: 1000,
+        calloutCharge: 500,
+        stairsFee: 100,
+        travelBackFee: 0,
+        minimumEstimatedCost: 1600,
+      };
+
+      // 60 mins -> no OT ($1600)
+      const s60 = getJobPricingSummary(job106, { totalWorkedMinutes: 60 });
+      expect(s60.initialTotal).toBe(1600);
+      expect(s60.overtimeMinutes).toBe(0);
+      expect(s60.overtimeAmount).toBe(0);
+      expect(s60.finalTotal).toBe(1600);
+
+      // 61 mins -> 1 OT block ($500) -> $2100
+      const s61 = getJobPricingSummary(job106, { totalWorkedMinutes: 61 });
+      expect(s61.overtimeMinutes).toBe(1);
+      expect(s61.overtimeBlocks).toBe(1);
+      expect(s61.overtimeAmount).toBe(500);
+      expect(s61.finalTotal).toBe(2100);
+
+      // 90 mins -> 1 OT block ($500) -> $2100
+      const s90 = getJobPricingSummary(job106, { totalWorkedMinutes: 90 });
+      expect(s90.overtimeMinutes).toBe(30);
+      expect(s90.overtimeBlocks).toBe(1);
+      expect(s90.overtimeAmount).toBe(500);
+      expect(s90.finalTotal).toBe(2100);
+
+      // 91 mins -> 2 OT blocks ($1000) -> $2600
+      const s91 = getJobPricingSummary(job106, { totalWorkedMinutes: 91 });
+      expect(s91.overtimeMinutes).toBe(31);
+      expect(s91.overtimeBlocks).toBe(2);
+      expect(s91.overtimeAmount).toBe(1000);
+      expect(s91.finalTotal).toBe(2600);
+    });
+
+    test("18. Partial Start API response merged over full job preserves callout & stairs", () => {
+      const fullJobBefore = {
+        _id: "job_106_id",
+        jobNumber: "JOB-00106",
+        pricing: {
+          hourlyRate: 1000,
+          estimatedHours: 1,
+          minimumCost: 1000,
+          calloutCharge: 500,
+          stairsFee: 100,
+          minimumEstimatedCost: 1600,
+        },
+        showDriverPrice: true,
+        driverPriceType: "hourly",
+      };
+
+      // Backend returns partial start response
+      const partialStartResponse = {
+        status: "in_progress",
+        startedAt: "2026-09-21T10:00:00.000Z",
+        myAssignment: {
+          status: "in_progress",
+          startedAt: "2026-09-21T10:00:00.000Z",
+        },
+      };
+
+      const merged = {
+        ...fullJobBefore,
+        ...partialStartResponse,
+        pricing: {
+          ...(fullJobBefore.pricing || {}),
+          ...(partialStartResponse.pricing || {}),
+        },
+        myAssignment: {
+          ...(fullJobBefore.myAssignment || {}),
+          ...(partialStartResponse.myAssignment || {}),
+        },
+      };
+
+      const norm = normalizeJob(merged, { _id: "driver_1" });
+      expect(norm.formattedPrice).toBe("$1600.00");
+      expect(norm.driverPrice).toBe(1600);
+
+      const summary = getJobPricingSummary(merged, norm.myAssignment);
+      expect(summary.calloutFee).toBe(500);
+      expect(summary.stairsFee).toBe(100);
+      expect(summary.initialTotal).toBe(1600);
+    });
+
+    test("19. JOB-00107 ($900): Before Start and After Start (Timer 00:00:24 and 00:59:59) price remains $900", () => {
+      const job107 = {
+        _id: "job_107_id",
+        jobNumber: "JOB-00107",
+        jobType: "moving",
+        status: "assigned",
+        showDriverPrice: true,
+        driverPriceType: "hourly",
+        hourlyRate: 600,
+        estimatedHours: 1,
+        minimumCost: 600,
+        calloutCharge: 300,
+        travelBackFee: 0,
+        minimumEstimatedCost: 900,
+      };
+
+      // 1. Before Start: Home, Jobs, JobDetail must all be $900
+      const normBefore = normalizeJob(job107, { _id: "driver_1" });
+      expect(normBefore.formattedPrice).toBe("$900.00");
+      expect(normBefore.driverPrice).toBe(900);
+
+      const detailBefore = calculateDriverHourlyEarnings(normBefore.myAssignment, job107);
+      expect(detailBefore.calloutFee).toBe(300);
+      expect(detailBefore.baseAmount).toBe(600);
+      expect(detailBefore.estimatedTotal).toBe(900);
+      expect(detailBefore.formattedEstimatedTotal).toBe("$900.00");
+
+      // 2. Immediately after Start (Timer 00:00:24)
+      const assignment24s = {
+        ...normBefore.myAssignment,
+        status: "in_progress",
+        isInProgress: true,
+        isPending: false,
+        startedAt: new Date(Date.now() - 24 * 1000).toISOString(),
+        totalWorkedMinutes: 0,
+      };
+
+      const normAfter24s = normalizeJob(
+        { ...job107, status: "in_progress", startedAt: assignment24s.startedAt, myAssignment: assignment24s },
+        { _id: "driver_1" }
+      );
+      expect(normAfter24s.formattedPrice).toBe("$900.00");
+      expect(normAfter24s.driverPrice).toBe(900);
+
+      const detailAfter24s = calculateDriverHourlyEarnings(assignment24s, job107);
+      expect(detailAfter24s.calloutFee).toBe(300);
+      expect(detailAfter24s.estimatedTotal).toBe(900);
+      expect(detailAfter24s.formattedEstimatedTotal).toBe("$900.00");
+
+      // 3. At 00:59:59 (59 mins worked - within 1 hour base)
+      const assignment59m = {
+        ...normBefore.myAssignment,
+        status: "in_progress",
+        isInProgress: true,
+        isPending: false,
+        startedAt: new Date(Date.now() - 59 * 60 * 1000).toISOString(),
+        totalWorkedMinutes: 59,
+      };
+
+      const normAfter59m = normalizeJob(
+        { ...job107, status: "in_progress", startedAt: assignment59m.startedAt, myAssignment: assignment59m },
+        { _id: "driver_1" }
+      );
+      expect(normAfter59m.formattedPrice).toBe("$900.00");
+
+      const detailAfter59m = calculateDriverHourlyEarnings(assignment59m, job107);
+      expect(detailAfter59m.estimatedTotal).toBe(900);
+      expect(detailAfter59m.overtimeAmount).toBe(0);
+    });
+
+    test("20. JOB-00107 Overtime Calculation: <=60m ($900), 61-90m ($1200), 91-120m ($1500)", () => {
+      const job107 = {
+        _id: "job_107_id",
+        jobNumber: "JOB-00107",
+        jobType: "moving",
+        status: "in_progress",
+        showDriverPrice: true,
+        driverPriceType: "hourly",
+        hourlyRate: 600,
+        estimatedHours: 1,
+        minimumCost: 600,
+        calloutCharge: 300,
+        travelBackFee: 0,
+        minimumEstimatedCost: 900,
+      };
+
+      // <= 60 mins -> Final $900
+      const s60 = getJobPricingSummary(job107, { totalWorkedMinutes: 60 });
+      expect(s60.initialTotal).toBe(900);
+      expect(s60.overtimeMinutes).toBe(0);
+      expect(s60.overtimeAmount).toBe(0);
+      expect(s60.finalTotal).toBe(900);
+
+      // 61-90 mins -> 1 block @ $300 -> Final $1200
+      const s75 = getJobPricingSummary(job107, { totalWorkedMinutes: 75 });
+      expect(s75.overtimeMinutes).toBe(15);
+      expect(s75.overtimeBlocks).toBe(1);
+      expect(s75.overtimeAmount).toBe(300);
+      expect(s75.finalTotal).toBe(1200);
+
+      // 91-120 mins -> 2 blocks @ $600 -> Final $1500
+      const s100 = getJobPricingSummary(job107, { totalWorkedMinutes: 100 });
+      expect(s100.overtimeMinutes).toBe(40);
+      expect(s100.overtimeBlocks).toBe(2);
+      expect(s100.overtimeAmount).toBe(600);
+      expect(s100.finalTotal).toBe(1500);
+    });
+
+    describe("Section 16: Six Regression Test Cases", () => {
+      // Case 1: status = assigned, base = 600, callout = 300 -> expected = 900
+      test("Case 1: status = assigned, base = 600, callout = 300 -> expected = 900", () => {
+        const j = {
+          jobNumber: "JOB-00107-C1",
+          status: "assigned",
+          showDriverPrice: true,
+          driverPriceType: "hourly",
+          hourlyRate: 600,
+          estimatedHours: 1,
+          minimumCost: 600,
+          calloutCharge: 300,
+          minimumEstimatedCost: 900,
+        };
+        const norm = normalizeJob(j, { _id: "driver_1" });
+        expect(norm.formattedPrice).toBe("$900.00");
+        expect(norm.driverPrice).toBe(900);
+      });
+
+      // Case 2: status = in_progress, same data -> expected = 900
+      test("Case 2: status = in_progress, same data -> expected = 900", () => {
+        const j = {
+          jobNumber: "JOB-00107-C2",
+          status: "in_progress",
+          showDriverPrice: true,
+          driverPriceType: "hourly",
+          hourlyRate: 600,
+          estimatedHours: 1,
+          minimumCost: 600,
+          calloutCharge: 300,
+          minimumEstimatedCost: 900,
+        };
+        const norm = normalizeJob(j, { _id: "driver_1" });
+        expect(norm.formattedPrice).toBe("$900.00");
+        expect(norm.driverPrice).toBe(900);
+      });
+
+      // Case 3: timer = 6 minutes -> expected = 900
+      test("Case 3: timer = 6 minutes -> expected = 900", () => {
+        const j = {
+          jobNumber: "JOB-00107-C3",
+          status: "in_progress",
+          showDriverPrice: true,
+          driverPriceType: "hourly",
+          hourlyRate: 600,
+          estimatedHours: 1,
+          minimumCost: 600,
+          calloutCharge: 300,
+          minimumEstimatedCost: 900,
+          startedAt: new Date(Date.now() - 6 * 60 * 1000).toISOString(),
+          myAssignment: {
+            status: "in_progress",
+            startedAt: new Date(Date.now() - 6 * 60 * 1000).toISOString(),
+            totalWorkedMinutes: 6,
+          },
+        };
+        const norm = normalizeJob(j, { _id: "driver_1" });
+        expect(norm.formattedPrice).toBe("$900.00");
+        expect(norm.driverPrice).toBe(900);
+
+        const summary = getJobPricingSummary(j, j.myAssignment);
+        expect(summary.displayEstimatedPrice).toBe("$900.00");
+        expect(summary.workedMinutes).toBe(6);
+        expect(summary.overtimeAmount).toBe(0);
+      });
+
+      // Case 4: app refresh with in_progress job -> expected = 900
+      test("Case 4: app refresh with in_progress job -> expected = 900", () => {
+        // Backend raw response from GET /jobs/:id
+        const freshRawFromAPI = {
+          _id: "job_c4_id",
+          jobNumber: "JOB-00107-C4",
+          status: "in_progress",
+          startedAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+          showDriverPrice: true,
+          driverPriceType: "hourly",
+          pricing: {
+            hourlyRate: 600,
+            estimatedHours: 1,
+            minimumLabourCost: 600,
+            calloutCharge: 300,
+            minimumEstimatedCost: 900,
+          },
+          myAssignment: {
+            status: "in_progress",
+            startedAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+            pricing: {
+              hourlyRate: 600,
+              baseHours: 1,
+            },
+          },
+        };
+        const norm = normalizeJob(freshRawFromAPI, { _id: "driver_1" });
+        expect(norm.formattedPrice).toBe("$900.00");
+        expect(norm.driverPrice).toBe(900);
+
+        const detail = calculateDriverHourlyEarnings(norm.myAssignment, freshRawFromAPI);
+        expect(detail.calloutFee).toBe(300);
+        expect(detail.estimatedTotal).toBe(900);
+        expect(detail.formattedEstimatedTotal).toBe("$900.00");
+      });
+
+      // Case 5: callout = 0, base = 600 -> expected = 600
+      test("Case 5: callout = 0, base = 600 -> expected = 600", () => {
+        const j = {
+          jobNumber: "JOB-00107-C5",
+          status: "in_progress",
+          showDriverPrice: true,
+          driverPriceType: "hourly",
+          hourlyRate: 600,
+          estimatedHours: 1,
+          minimumCost: 600,
+          calloutCharge: 0,
+          minimumEstimatedCost: 600,
+        };
+        const norm = normalizeJob(j, { _id: "driver_1" });
+        expect(norm.formattedPrice).toBe("$600.00");
+        expect(norm.driverPrice).toBe(600);
+      });
+
+      // Case 6: showDriverPrice = false -> price hidden
+      test("Case 6: showDriverPrice = false -> price hidden", () => {
+        const j = {
+          jobNumber: "JOB-00107-C6",
+          status: "in_progress",
+          showDriverPrice: false,
+          driverPriceType: "hourly",
+          hourlyRate: 600,
+          estimatedHours: 1,
+          minimumCost: 600,
+          calloutCharge: 300,
+          minimumEstimatedCost: 900,
+        };
+        const norm = normalizeJob(j, { _id: "driver_1" });
+        expect(norm.canShowPrice).toBe(false);
+        expect(norm.formattedPrice).toBeNull();
+      });
+    });
+
+    // ── SECTION 19: JOB-00109 Exact Lifecycle & Callout Retention Regression Test ──
+    describe("19. JOB-00109 ($2000 Base + $1000 Callout + $100 Stairs = $3100) Lifecycle", () => {
+      const rawJobBeforeStart = {
+        _id: "job_00109",
+        jobNumber: "JOB-00109",
+        status: "assigned",
+        showDriverPrice: true,
+        driverPriceType: "full",
+        hourlyRate: 2000,
+        estimatedHours: 1,
+        minimumCost: 2000,
+        callOutFee: 1000,
+        calloutCharge: 1000,
+        stairsFee: 100,
+        minimumEstimatedCost: 3100,
+        driverPrice: 3100,
+        pricing: {
+          hourlyRate: 2000,
+          estimatedHours: 1,
+          minimumLabourCost: 2000,
+          calloutCharge: 1000,
+          callOutFee: 1000,
+          stairsFee: 100,
+          minimumEstimatedCost: 3100,
+        },
+        billing: {
+          hourlyRate: 2000,
+          calloutCharge: 1000,
+          stairsFee: 100,
+          totalAmount: 3100,
+        },
+      };
+
+      test("STEP 1 & 4: Before Start -> display = $3100.00", () => {
+        const norm = normalizeJob(rawJobBeforeStart, { _id: "driver_1" });
+        expect(norm.formattedPrice).toBe("$3100.00");
+        expect(norm.driverPrice).toBe(3100);
+
+        const summary = getJobPricingSummary(norm);
+        expect(summary.hourlyRate).toBe(2000);
+        expect(summary.baseAmount).toBe(2000);
+        expect(summary.calloutFee).toBe(1000);
+        expect(summary.stairsFee).toBe(100);
+        expect(summary.initialTotal).toBe(3100);
+        expect(summary.estimatedTotal).toBe(3100);
+      });
+
+      test("STEP 2 & 4: Immediately after POST /start (partial payload merged) -> display = $3100.00", () => {
+        const postStartResponse = {
+          _id: "job_00109",
+          jobNumber: "JOB-00109",
+          status: "in_progress",
+          startedAt: new Date().toISOString(),
+          pricing: {
+            hourlyRate: 2000,
+            estimatedHours: 1,
+            minimumCost: 2000,
+          },
+        };
+
+        const mergedAfterStart = {
+          ...rawJobBeforeStart,
+          ...postStartResponse,
+          pricing: {
+            ...rawJobBeforeStart.pricing,
+            ...postStartResponse.pricing,
+          },
+        };
+
+        const norm = normalizeJob(mergedAfterStart, { _id: "driver_1" });
+        expect(norm.formattedPrice).toBe("$3100.00");
+        expect(norm.driverPrice).toBe(3100);
+
+        const summary = getJobPricingSummary(norm);
+        expect(summary.calloutFee).toBe(1000);
+        expect(summary.stairsFee).toBe(100);
+        expect(summary.initialTotal).toBe(3100);
+      });
+
+      test("STEP 3 & 4: Fresh GET after start at 10 minutes (within 1 hr base) -> display = $3100.00", () => {
+        const freshGetAfterStart = {
+          ...rawJobBeforeStart,
+          status: "in_progress",
+          startedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+          myAssignment: {
+            status: "in_progress",
+            startedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+            totalWorkedMinutes: 10,
+          },
+        };
+
+        const norm = normalizeJob(freshGetAfterStart, { _id: "driver_1" });
+        expect(norm.formattedPrice).toBe("$3100.00");
+        expect(norm.driverPrice).toBe(3100);
+
+        const summary = getJobPricingSummary(norm);
+        expect(summary.calloutFee).toBe(1000);
+        expect(summary.stairsFee).toBe(100);
+        expect(summary.initialTotal).toBe(3100);
+        expect(summary.finalTotal).toBe(3100);
+      });
+
+      test("STEP 8: Overtime after 90 minutes (30 min overtime on $2000/hr = +$1000) -> finalTotal = $4100.00", () => {
+        const jobWithOvertime = {
+          ...rawJobBeforeStart,
+          status: "in_progress",
+          myAssignment: {
+            status: "in_progress",
+            startedAt: new Date(Date.now() - 90 * 60 * 1000).toISOString(),
+            totalWorkedMinutes: 90,
+          },
+        };
+
+        const summary = getJobPricingSummary(jobWithOvertime);
+        expect(summary.initialTotal).toBe(3100);
+        expect(summary.overtimeMinutes).toBe(30);
+        expect(summary.overtimeBlocks).toBe(1);
+        expect(summary.overtimeAmount).toBe(1000); // 1 block * (2000 / 2)
+        expect(summary.finalTotal).toBe(4100); // 3100 + 1000
+      });
+    });
   });
 });

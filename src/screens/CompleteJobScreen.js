@@ -525,14 +525,12 @@ export default function CompleteJobScreen({ navigation, route }) {
                     </Text>
                   </View>
 
-                  {pricingSummary.calloutFee > 0 ? (
-                    <View style={styles.breakdownItemRow}>
-                      <Text style={styles.breakdownItemLabel}>Callout Charge</Text>
-                      <Text style={styles.breakdownItemVal}>
-                        {pricingSummary.formattedCalloutFee}
-                      </Text>
-                    </View>
-                  ) : null}
+                  <View style={styles.breakdownItemRow}>
+                    <Text style={styles.breakdownItemLabel}>Callout Charge</Text>
+                    <Text style={styles.breakdownItemVal}>
+                      {pricingSummary.formattedCalloutFee}
+                    </Text>
+                  </View>
 
                   {pricingSummary.stairsFee > 0 ? (
                     <View style={styles.breakdownItemRow}>

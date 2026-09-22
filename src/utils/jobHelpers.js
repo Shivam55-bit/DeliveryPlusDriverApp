@@ -92,24 +92,26 @@ export const getDriverPriceType = (myAssignment = {}, job = {}) => {
     "";
 
   const norm = normalizeValue(rawType);
-  if (norm.includes("hour")) return "hourly";
   if (norm.includes("custom")) return "custom";
   if (norm.includes("percent")) return "percentage";
   if (norm.includes("fix") || norm.includes("flat")) return "fixed";
-  if (norm.includes("full")) return "full";
 
-  // Check if hourlyRate is explicitly configured > 0
+  // Check if hourlyRate is explicitly configured > 0 OR norm includes "hour"
   const hourlyRate = Number(
     myAssignment?.hourlyRate ??
     myAssignment?.pricingSnapshot?.hourlyRate ??
     myAssignment?.pricing?.hourlyRate ??
     job?.hourlyRate ??
     job?.pricing?.hourlyRate ??
+    job?.raw?.pricing?.hourlyRate ??
+    job?.raw?.hourlyRate ??
     0
   );
-  if (hourlyRate > 0) return "hourly";
+  if (hourlyRate > 0 || norm.includes("hour")) return "hourly";
 
-  return "full";
+  if (norm.includes("full")) return "full";
+
+  return "hourly";
 };
 
 /**
@@ -1162,22 +1164,180 @@ export const normalizeJob = (raw = {}, currentUser = null) => {
 
     itemList: raw.itemList ?? raw.items ?? [],
 
-    pricing: raw.pricing ?? {
-      hourlyRate: raw.hourlyRate,
-      minimumLabourCost: raw.minimumLabourCost ?? raw.minimumCost,
-      movers: raw.movers ?? raw.moversCount,
-      truckCount: raw.truckCount ?? raw.trucks,
-      calloutCharge: raw.calloutCharge,
-      calloutTime: raw.calloutTime,
-      travelBackCharge: raw.travelBackCharge,
-      travelBackTime: raw.travelBackTime,
-      minimumCharge: raw.minimumCharge,
-      minimumEstimatedCost: raw.minimumEstimatedCost ?? raw.estimatedCost,
-      extraTime: raw.extraTime,
-      extraTimeCharge: raw.extraTimeCharge,
-      finalCost: raw.finalCost,
-      amountPaid: raw.amountPaid,
-      outstandingAmount: raw.outstandingAmount,
+    pricing: {
+      ...(typeof raw.pricing === "object" ? raw.pricing : {}),
+      hourlyRate:
+        raw.pricing?.hourlyRate ??
+        raw.hourlyRate ??
+        raw.billing?.hourlyRate ??
+        0,
+      minimumLabourCost:
+        raw.pricing?.minimumLabourCost ??
+        raw.pricing?.minimumLaborCost ??
+        raw.pricing?.minimumCost ??
+        raw.minimumLabourCost ??
+        raw.minimumLaborCost ??
+        raw.minimumCost ??
+        0,
+      movers: raw.pricing?.movers ?? raw.pricing?.moversCount ?? raw.movers ?? raw.moversCount,
+      truckCount: raw.pricing?.truckCount ?? raw.pricing?.trucks ?? raw.truckCount ?? raw.trucks,
+      calloutCharge:
+        raw.pricing?.calloutCharge ??
+        raw.pricing?.calloutFee ??
+        raw.pricing?.callOutCharge ??
+        raw.pricing?.callOutFee ??
+        raw.pricing?.callout_charge ??
+        raw.pricing?.callout_fee ??
+        raw.pricing?.call_out_charge ??
+        raw.pricing?.call_out_fee ??
+        raw.pricing?.calloutAmount ??
+        raw.pricing?.callOutAmount ??
+        raw.pricing?.calloutPrice ??
+        raw.pricing?.callOutPrice ??
+        raw.pricing?.callout ??
+        raw.pricing?.callOut ??
+        raw.calloutCharge ??
+        raw.calloutFee ??
+        raw.callOutCharge ??
+        raw.callOutFee ??
+        raw.callout_charge ??
+        raw.callout_fee ??
+        raw.call_out_charge ??
+        raw.call_out_fee ??
+        raw.calloutAmount ??
+        raw.callOutAmount ??
+        raw.calloutPrice ??
+        raw.callOutPrice ??
+        raw.callout ??
+        raw.callOut ??
+        raw.billing?.calloutCharge ??
+        raw.billing?.calloutFee ??
+        raw.billing?.callOutCharge ??
+        raw.billing?.callOutFee ??
+        raw.billing?.call_out_charge ??
+        raw.billing?.call_out_fee ??
+        0,
+      calloutFee:
+        raw.pricing?.calloutFee ??
+        raw.pricing?.calloutCharge ??
+        raw.pricing?.callOutFee ??
+        raw.pricing?.callOutCharge ??
+        raw.pricing?.callout_fee ??
+        raw.pricing?.callout_charge ??
+        raw.pricing?.call_out_fee ??
+        raw.pricing?.call_out_charge ??
+        raw.pricing?.calloutAmount ??
+        raw.pricing?.callOutAmount ??
+        raw.pricing?.calloutPrice ??
+        raw.pricing?.callOutPrice ??
+        raw.pricing?.callout ??
+        raw.pricing?.callOut ??
+        raw.calloutFee ??
+        raw.calloutCharge ??
+        raw.callOutFee ??
+        raw.callOutCharge ??
+        raw.callout_fee ??
+        raw.callout_charge ??
+        raw.call_out_fee ??
+        raw.call_out_charge ??
+        raw.calloutAmount ??
+        raw.callOutAmount ??
+        raw.calloutPrice ??
+        raw.callOutPrice ??
+        raw.callout ??
+        raw.callOut ??
+        raw.billing?.calloutFee ??
+        raw.billing?.calloutCharge ??
+        raw.billing?.callOutFee ??
+        raw.billing?.callOutCharge ??
+        raw.billing?.call_out_fee ??
+        raw.billing?.call_out_charge ??
+        0,
+      stairsFee:
+        raw.pricing?.stairsFee ??
+        raw.pricing?.stairsCharge ??
+        raw.pricing?.stairFee ??
+        raw.pricing?.stairCharge ??
+        raw.pricing?.stairsCost ??
+        raw.pricing?.stairs_fee ??
+        raw.pricing?.stairs_charge ??
+        raw.stairsFee ??
+        raw.stairsCharge ??
+        raw.stairFee ??
+        raw.stairCharge ??
+        raw.stairsCost ??
+        raw.stairs_fee ??
+        raw.stairs_charge ??
+        raw.billing?.stairsFee ??
+        raw.billing?.stairsCharge ??
+        raw.billing?.stairFee ??
+        raw.billing?.stairCharge ??
+        raw.billing?.stairs_fee ??
+        raw.billing?.stairs_charge ??
+        0,
+      travelBackCharge:
+        raw.pricing?.travelBackCharge ??
+        raw.pricing?.travelBackFee ??
+        raw.pricing?.travelBack ??
+        raw.pricing?.travelFee ??
+        raw.pricing?.travel_back_charge ??
+        raw.pricing?.travel_back_fee ??
+        raw.travelBackCharge ??
+        raw.travelBackFee ??
+        raw.travelBack ??
+        raw.travelFee ??
+        raw.travel_back_charge ??
+        raw.travel_back_fee ??
+        raw.billing?.travelBackCharge ??
+        raw.billing?.travelBackFee ??
+        raw.billing?.travelBack ??
+        raw.billing?.travelFee ??
+        raw.billing?.travel_back_charge ??
+        raw.billing?.travel_back_fee ??
+        0,
+      travelBackFee:
+        raw.pricing?.travelBackFee ??
+        raw.pricing?.travelBackCharge ??
+        raw.pricing?.travelBack ??
+        raw.pricing?.travelFee ??
+        raw.pricing?.travel_back_fee ??
+        raw.pricing?.travel_back_charge ??
+        raw.travelBackFee ??
+        raw.travelBackCharge ??
+        raw.travelBack ??
+        raw.travelFee ??
+        raw.travel_back_fee ??
+        raw.travel_back_charge ??
+        raw.billing?.travelBackFee ??
+        raw.billing?.travelBackCharge ??
+        raw.billing?.travelBack ??
+        raw.billing?.travelFee ??
+        raw.billing?.travel_back_fee ??
+        raw.billing?.travel_back_charge ??
+        0,
+      minimumCharge: raw.pricing?.minimumCharge ?? raw.minimumCharge ?? 0,
+      minimumEstimatedCost:
+        raw.pricing?.minimumEstimatedCost ??
+        raw.pricing?.estimatedTotal ??
+        raw.pricing?.estimatedCost ??
+        raw.minimumEstimatedCost ??
+        raw.estimatedTotal ??
+        raw.estimatedCost ??
+        raw.billing?.minimumEstimatedCost ??
+        raw.billing?.estimatedTotal ??
+        0,
+      estimatedTotal:
+        raw.pricing?.estimatedTotal ??
+        raw.pricing?.minimumEstimatedCost ??
+        raw.estimatedTotal ??
+        raw.minimumEstimatedCost ??
+        raw.billing?.estimatedTotal ??
+        0,
+      extraTime: raw.pricing?.extraTime ?? raw.extraTime,
+      extraTimeCharge: raw.pricing?.extraTimeCharge ?? raw.extraTimeCharge ?? 0,
+      finalCost: raw.pricing?.finalCost ?? raw.pricing?.finalAmount ?? raw.finalCost ?? raw.finalAmount,
+      amountPaid: raw.pricing?.amountPaid ?? raw.amountPaid,
+      outstandingAmount: raw.pricing?.outstandingAmount ?? raw.outstandingAmount,
     },
   };
 };
@@ -1205,10 +1365,10 @@ export const normalizeJob = (raw = {}, currentUser = null) => {
 export const getJobPricingSummary = (job = {}, myAssignment = null, screenName = "") => {
   const assignment = myAssignment || job?.myAssignment || null;
   const snapshot = assignment?.pricingSnapshot || assignment?.pricing || {};
-  const jobPricing = job?.pricing || {};
-  const billing = job?.billing || {};
+  const jobPricing = job?.pricing || job?.raw?.pricing || {};
+  const billing = job?.billing || job?.raw?.billing || {};
 
-  const showDriverPrice = isDriverPriceVisible(assignment, job);
+  const showDriverPrice = isDriverPriceVisible(assignment, job, job?.raw);
   const priceType = getDriverPriceType(assignment, job);
   const isHourly = priceType === "hourly";
 
@@ -1218,6 +1378,8 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
     assignment?.hourlyRate ??
     jobPricing?.hourlyRate ??
     job?.hourlyRate ??
+    job?.raw?.pricing?.hourlyRate ??
+    job?.raw?.hourlyRate ??
     0;
   const hourlyRate = Math.max(0, Number(rawHourlyRate) || 0);
 
@@ -1235,6 +1397,10 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
     job?.baseHours ??
     job?.minimumChargeHours ??
     job?.minimumHours ??
+    job?.raw?.pricing?.estimatedHours ??
+    job?.raw?.pricing?.baseHours ??
+    job?.raw?.estimatedHours ??
+    job?.raw?.baseHours ??
     (isHourly ? 1 : 1);
   const baseHours = Math.max(0, Number(rawBaseHours) || (isHourly ? 1 : 1));
   const baseMinutes = Math.round(baseHours * 60);
@@ -1251,12 +1417,22 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
     jobPricing?.minimumCost ??
     jobPricing?.baseAmount ??
     jobPricing?.baseCost ??
+    billing?.minimumLaborCost ??
+    billing?.minimumLabourCost ??
+    billing?.minimumCost ??
     job?.minimumLabourCost ??
     job?.minimumLaborCost ??
     job?.minimumLaborCharge ??
     job?.minimumCost ??
     job?.baseAmount ??
     job?.baseCost ??
+    job?.raw?.pricing?.minimumLabourCost ??
+    job?.raw?.pricing?.minimumLaborCost ??
+    job?.raw?.pricing?.minimumCost ??
+    job?.raw?.pricing?.baseAmount ??
+    job?.raw?.minimumLabourCost ??
+    job?.raw?.minimumLaborCost ??
+    job?.raw?.minimumCost ??
     (isHourly ? hourlyRate * baseHours : 0);
   const baseAmount = Math.max(0, Number(rawBaseAmount) || (isHourly ? hourlyRate * baseHours : 0));
 
@@ -1266,10 +1442,66 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
     Number(
       snapshot?.calloutFee ??
       snapshot?.calloutCharge ??
+      snapshot?.callOutFee ??
+      snapshot?.callOutCharge ??
+      snapshot?.callout_fee ??
+      snapshot?.callout_charge ??
+      snapshot?.call_out_fee ??
+      snapshot?.call_out_charge ??
+      snapshot?.calloutAmount ??
+      snapshot?.callOutAmount ??
+      snapshot?.calloutPrice ??
+      snapshot?.callOutPrice ??
+      snapshot?.callout ??
+      snapshot?.callOut ??
+      snapshot?.pricing?.calloutFee ??
+      snapshot?.pricing?.calloutCharge ??
+      snapshot?.pricing?.callOutFee ??
+      snapshot?.pricing?.callOutCharge ??
+      snapshot?.pricing?.callout ??
+      snapshot?.pricing?.callOut ??
       jobPricing?.calloutCharge ??
       jobPricing?.calloutFee ??
+      jobPricing?.callOutCharge ??
+      jobPricing?.callOutFee ??
+      jobPricing?.callout ??
+      jobPricing?.callOut ??
+      jobPricing?.call_out_charge ??
+      jobPricing?.call_out_fee ??
+      billing?.calloutCharge ??
+      billing?.calloutFee ??
+      billing?.callOutCharge ??
+      billing?.callOutFee ??
+      billing?.call_out_charge ??
+      billing?.call_out_fee ??
       job?.calloutCharge ??
       job?.calloutFee ??
+      job?.callOutCharge ??
+      job?.callOutFee ??
+      job?.callout ??
+      job?.callOut ??
+      job?.call_out_charge ??
+      job?.call_out_fee ??
+      job?.raw?.pricing?.calloutCharge ??
+      job?.raw?.pricing?.calloutFee ??
+      job?.raw?.pricing?.callOutCharge ??
+      job?.raw?.pricing?.callOutFee ??
+      job?.raw?.pricing?.callout ??
+      job?.raw?.pricing?.callOut ??
+      job?.raw?.calloutCharge ??
+      job?.raw?.calloutFee ??
+      job?.raw?.callOutCharge ??
+      job?.raw?.callOutFee ??
+      job?.raw?.callout ??
+      job?.raw?.callOut ??
+      job?.raw?.call_out_charge ??
+      job?.raw?.call_out_fee ??
+      job?.raw?.billing?.calloutCharge ??
+      job?.raw?.billing?.calloutFee ??
+      job?.raw?.billing?.callOutCharge ??
+      job?.raw?.billing?.callOutFee ??
+      job?.raw?.billing?.call_out_charge ??
+      job?.raw?.billing?.call_out_fee ??
       0
     ) || 0
   );
@@ -1279,10 +1511,41 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
     Number(
       snapshot?.stairsFee ??
       snapshot?.stairsCharge ??
+      snapshot?.stairsCost ??
+      snapshot?.stairFee ??
+      snapshot?.stairCharge ??
+      snapshot?.stairs_fee ??
+      snapshot?.stairs_charge ??
+      snapshot?.pricing?.stairsFee ??
+      snapshot?.pricing?.stairsCharge ??
+      snapshot?.pricing?.stairFee ??
+      snapshot?.pricing?.stairCharge ??
       jobPricing?.stairsFee ??
       jobPricing?.stairsCharge ??
+      jobPricing?.stairsCost ??
+      jobPricing?.stairFee ??
+      jobPricing?.stairCharge ??
+      billing?.stairsFee ??
+      billing?.stairsCharge ??
+      billing?.stairFee ??
+      billing?.stairCharge ??
       job?.stairsFee ??
       job?.stairsCharge ??
+      job?.stairsCost ??
+      job?.stairFee ??
+      job?.stairCharge ??
+      job?.raw?.pricing?.stairsFee ??
+      job?.raw?.pricing?.stairsCharge ??
+      job?.raw?.pricing?.stairFee ??
+      job?.raw?.pricing?.stairCharge ??
+      job?.raw?.stairsFee ??
+      job?.raw?.stairsCharge ??
+      job?.raw?.stairFee ??
+      job?.raw?.stairCharge ??
+      job?.raw?.billing?.stairsFee ??
+      job?.raw?.billing?.stairsCharge ??
+      job?.raw?.billing?.stairFee ??
+      job?.raw?.billing?.stairCharge ??
       0
     ) || 0
   );
@@ -1292,10 +1555,31 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
     Number(
       snapshot?.travelBackFee ??
       snapshot?.travelBackCharge ??
+      snapshot?.travelBack ??
+      snapshot?.travelFee ??
+      snapshot?.travel_back_fee ??
+      snapshot?.travel_back_charge ??
+      snapshot?.pricing?.travelBackFee ??
+      snapshot?.pricing?.travelBackCharge ??
       jobPricing?.travelBackCharge ??
       jobPricing?.travelBackFee ??
+      jobPricing?.travelBack ??
+      jobPricing?.travelFee ??
+      billing?.travelBackCharge ??
+      billing?.travelBackFee ??
+      billing?.travelBack ??
+      billing?.travelFee ??
       job?.travelBackCharge ??
       job?.travelBackFee ??
+      job?.travelBack ??
+      job?.travelFee ??
+      job?.raw?.pricing?.travelBackCharge ??
+      job?.raw?.pricing?.travelBackFee ??
+      job?.raw?.travelBackCharge ??
+      job?.raw?.travelBackFee ??
+      job?.raw?.travelBack ??
+      job?.raw?.billing?.travelBackCharge ??
+      job?.raw?.billing?.travelBackFee ??
       0
     ) || 0
   );
@@ -1304,9 +1588,14 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
     0,
     Number(
       snapshot?.extraCharges ??
+      snapshot?.pricing?.extraCharges ??
       jobPricing?.extraCharges ??
       jobPricing?.extraTimeCharge ??
+      billing?.extraCharges ??
       job?.extraCharges ??
+      job?.raw?.pricing?.extraCharges ??
+      job?.raw?.extraCharges ??
+      job?.raw?.billing?.extraCharges ??
       0
     ) || 0
   );
@@ -1325,9 +1614,15 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
     job?.initialTotal ??
     job?.minimumEstimatedCost ??
     job?.estimatedTotal ??
+    job?.raw?.pricing?.initialTotal ??
+    job?.raw?.pricing?.minimumEstimatedCost ??
+    job?.raw?.pricing?.estimatedTotal ??
+    job?.raw?.pricing?.estimatedCost ??
+    job?.raw?.minimumEstimatedCost ??
+    job?.raw?.estimatedTotal ??
     (priceType === "percentage" || priceType === "custom"
       ? 0
-      : (job?.billing?.estimatedTotal ?? job?.billing?.totalAmount ?? job?.totalAmount ?? 0))
+      : (billing?.estimatedTotal ?? billing?.totalAmount ?? job?.raw?.billing?.estimatedTotal ?? job?.raw?.billing?.totalAmount ?? job?.raw?.totalAmount ?? job?.totalAmount ?? 0))
   );
 
   const calculatedInitialTotal = isHourly

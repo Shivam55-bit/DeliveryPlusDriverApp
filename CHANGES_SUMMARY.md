@@ -36,24 +36,25 @@
 
 ### 2️⃣ `src/screens/CompleteJobScreen.js`
 * **AMOUNT TO COLLECT Display Fix:**
-  * Ab purane galat `$100` ki jagah `pricingSummary.formattedAmountToCollect` (**$250.00**) render hota hai.
+  * Ab purane galat `$100` ya `$200` ki jagah `pricingSummary.formattedAmountToCollect` (**$300.00** jab 90 mins worked ho, ya **$250.00** jab 60 mins worked ho) render hota hai.
 * **Line-Item Breakdown UI:**
   * Complete Job screen par pura itemized bill dikhaya:
     * Base Cost (1 Hr): `$100.00`
     * Callout Charge: `$50.00`
-    * Stairs Fee: `$50.00`
+    * Stairs Fee: `$100.00` (CRM configured)
+    * Travel Back: `$0.00`
     * Overtime (30 Min): `$50.00`
-    * **Final Amount:** **`$250.00`**
+    * **Final Amount:** **`$300.00`**
 * **Amount Received Input:**
-  * Default input box me automatically **$250.00** fill hota hai.
+  * Default input box me automatically **$300.00** fill hota hai.
 
 ---
 
 ### 3️⃣ `src/screens/JobDetailScreen.js`
 * **Pending / In-Progress Job Pricing:**
-  * Driver ko start se pehle aur job ke dauran Estimated Total **$200.00** dikhata hai.
+  * Driver ko start se pehle aur job ke dauran Estimated Total **$250.00** dikhata hai (Base Cost $100 + Callout $50 + Stairs $100).
 * **Completed Job Breakdown:**
-  * Completed session me line items aur Final Total **$250.00** dikhata hai.
+  * Completed session me line items aur Final Total **$300.00** dikhata hai (agar 90 min worked ho).
 * **`showDriverPrice: false` Handling:**
   * Agar CRM se "Show Price to Driver" band ho, toh driver ko price UI bilkul nahi dikhta.
 
@@ -62,26 +63,51 @@
 ### 4️⃣ `src/screens/StartJobAgreementScreen.js`
 * **Card Title Update:**
   * Start Job screen par card heading `"Agreement & Delivery Terms"` ko badal kar **`"Authorization & Acknowledgment of Terms"`** kar diya gaya hai.
+* **Start Job State Retention & Authoritative Refresh Fix:**
+  * `POST /jobs/:id/start` ke baad backend se `GET /jobs/:id` karke fresh authoritative job fetch kiya jata hai.
+  * Deep safe-merge implement kiya gaya jisse Callout Charge ($500), Stairs Fee ($100), aur `minimumEstimatedCost` ($1600) Start Job ke baad erase nahi hote aur timer chalte waqt price **$1600.00** hi bana rehta hai.
 
 ---
 
-### 4️⃣ `src/screens/HomeScreen.js` & `src/screens/JobsScreen.js`
-* Job cards par initial estimated price ($200.00) sahi tarike se render hota hai.
+### 5️⃣ `src/screens/JobDetailScreen.js`
+* **`onJobStarted` Callback:**
+  * Start hone ke baad normalized job set karne ke sath `fetchJobDetails()` trigger hota hai.
+  * In-progress card me Base Cost ($600), Callout ($300), Travel Back ($0) ke sath Estimated Total **$900.00** (JOB-00107) display hota hai.
 
 ---
 
-### 5️⃣ `src/utils/__tests__/pricing.test.js`
-* Unit tests likhe gaye:
-  1. Exact Scenario: 90 mins worked $\rightarrow$ Final Total = **$250.00**
-  2. No Overtime: 60 mins worked $\rightarrow$ Final Total = **$200.00**
-  3. 2 Hours: 120 mins worked $\rightarrow$ Final Total = **$300.00**
-  4. Show Price OFF $\rightarrow$ Price Hidden
-  5. Percentage / Custom / Full Price modes check
-* **Result:** **11 / 11 Tests Passed** ✅
+### 6️⃣ `src/utils/jobHelpers.js` (normalizeJob Pricing Deep-Merge)
+* `normalizeJob` me `raw.pricing` ko top-level `raw.calloutCharge`, `raw.stairsFee`, `raw.travelBackFee`, `raw.minimumEstimatedCost` aur `raw.billing` ke sath merge kiya gaya, jisse backend ke partial `pricing` object se add-on charges wipe-out nahi hote.
+### 7️⃣ `src/utils/__tests__/pricing.test.js`
+* **23 Comprehensive Unit Tests (100% Passing):**
+  * Section 16 Regression Test Suite:
+    * Case 1: `status = assigned`, `base = 600`, `callout = 300` $\rightarrow$ **$900.00**
+    * Case 2: `status = in_progress`, `base = 600`, `callout = 300` $\rightarrow$ **$900.00**
+    * Case 3: `timer = 6 minutes` $\rightarrow$ **$900.00**
+    * Case 4: App refresh with in-progress job $\rightarrow$ **$900.00**
+    * Case 5: `callout = 0`, `base = 600` $\rightarrow$ **$600.00**
+    * Case 6: `showDriverPrice = false` $\rightarrow$ Price cleanly hidden
+  * JOB-00106 ($1600 before/after start, overtime $2100 & $2600)
+  * JOB-00200 & JOB-00250 (30m overtime = $250 & $300)
+  * **Result:** **23 / 23 Tests Passed** ✅
 
 ---
 
 ## 📊 3. Calculations Summary (गणना का सारांश)
+
+| Field | CRM / API Value | App Rendering |
+| :--- | :---: | :---: |
+| **Hourly Rate** | $600 / hr | $600.00 / hr |
+| **Base Hours** | 1 Hour | 1 Hr |
+| **Base Cost (Minimum Labor)** | $600.00 | $600.00 |
+| **Callout Fee** | $300.00 | $300.00 |
+| **Stairs Fee** | $0.00 | $0.00 |
+| **Travel Back** | $0.00 | $0.00 |
+| **Initial Estimated Total** | **$900.00** | **$900.00** |
+| **Before Start (Upcoming)** | **$900.00** | **$900.00** |
+| **After Start (In Progress @ 00:06:04)** | **$900.00** | **$900.00** |
+| **Overtime (61–90 min)** | + $300.00 | $1200.00 |
+| **Overtime (91–120 min)** | + $600.00 | $1500.00 |
 
 | Field | CRM / API Value | App Rendering |
 | :--- | :---: | :---: |
