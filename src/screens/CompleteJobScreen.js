@@ -662,7 +662,6 @@ export default function CompleteJobScreen({ navigation, route }) {
             {[
               { key: "cash", label: "Cash", icon: "cash-outline" },
               { key: "online", label: "Online / EFT", icon: "card-outline" },
-              { key: "other", label: "Other", icon: "ellipsis-horizontal" },
             ].map((m) => {
               const selected = paymentMethod === m.key;
               return (
