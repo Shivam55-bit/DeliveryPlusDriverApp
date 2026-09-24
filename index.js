@@ -14,15 +14,22 @@ try {
         ? RNFBMessaging.default()
         : null;
 
+  const handleBackgroundPush = async (remoteMessage) => {
+    console.log("[Push] ==================== BACKGROUND PUSH RECEIVED ====================");
+    console.log("[Push] State: BACKGROUND");
+    console.log("[Push] messageId:", remoteMessage?.messageId || "N/A");
+    console.log("[Push] notification.title:", remoteMessage?.notification?.title || remoteMessage?.data?.title || "(No Title)");
+    console.log("[Push] notification.body:", remoteMessage?.notification?.body || remoteMessage?.data?.body || "(No Body)");
+    console.log("[Push] data:", JSON.stringify(remoteMessage?.data || {}));
+    console.log("[Push] sentTime:", remoteMessage?.sentTime ? new Date(remoteMessage.sentTime).toISOString() : new Date().toISOString());
+    console.log("[Push] ================================================================");
+  };
+
   if (messagingInstance) {
     if (typeof RNFBMessaging.setBackgroundMessageHandler === "function") {
-      RNFBMessaging.setBackgroundMessageHandler(messagingInstance, async (remoteMessage) => {
-        console.log("[Push] Background message received in background handler:", remoteMessage?.messageId);
-      });
+      RNFBMessaging.setBackgroundMessageHandler(messagingInstance, handleBackgroundPush);
     } else if (typeof messagingInstance.setBackgroundMessageHandler === "function") {
-      messagingInstance.setBackgroundMessageHandler(async (remoteMessage) => {
-        console.log("[Push] Background message received in background handler:", remoteMessage?.messageId);
-      });
+      messagingInstance.setBackgroundMessageHandler(handleBackgroundPush);
     }
   }
 } catch (err) {
@@ -34,7 +41,7 @@ try {
   if (typeof notifee?.onBackgroundEvent === "function") {
     notifee.onBackgroundEvent(async ({ type, detail }) => {
       if (type === EventType.PRESS) {
-        console.log("[Push] Background Notifee notification pressed:", detail?.notification);
+        console.log("[Push] Background Notifee notification pressed:", JSON.stringify(detail?.notification || {}));
       }
     });
   }

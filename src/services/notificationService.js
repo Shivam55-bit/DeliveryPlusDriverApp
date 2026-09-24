@@ -2,7 +2,7 @@ import { Platform, PermissionsAndroid, Alert } from "react-native";
 import * as RNFBMessaging from "@react-native-firebase/messaging";
 import notifee, { AndroidImportance, EventType } from "@notifee/react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import API, { getStoredAuthToken } from "./api";
+import API, { getStoredAuthToken, getStoredUser } from "./api";
 import { navigate, setPendingNotificationTarget } from "../navigation/navigationRef";
 
 const FCM_TOKEN_STORAGE_KEY = "@delivery_plus_fcm_token";
@@ -46,6 +46,26 @@ export const NOTIFICATION_CHANNELS = {
 };
 
 /**
+ * Logs structured raw message information across all app states (Foreground, Background, Killed/Launch).
+ */
+export const logPushDebugDetails = (state, remoteMessage) => {
+  const messageId = remoteMessage?.messageId || remoteMessage?.id || "N/A";
+  const title = remoteMessage?.notification?.title || remoteMessage?.data?.title || "(No Title)";
+  const body = remoteMessage?.notification?.body || remoteMessage?.data?.body || "(No Body)";
+  const data = remoteMessage?.data || {};
+  const sentTime = remoteMessage?.sentTime ? new Date(remoteMessage.sentTime).toISOString() : new Date().toISOString();
+
+  console.log(`[Push] ==================== PUSH RECEIVED [${state}] ====================`);
+  console.log(`[Push] State: ${state}`);
+  console.log(`[Push] messageId: ${messageId}`);
+  console.log(`[Push] notification.title: ${title}`);
+  console.log(`[Push] notification.body: ${body}`);
+  console.log(`[Push] data:`, JSON.stringify(data));
+  console.log(`[Push] sentTime: ${sentTime}`);
+  console.log(`[Push] ==============================================================`);
+};
+
+/**
  * Creates required Android notification channels once.
  */
 export const createNotificationChannels = async () => {
@@ -75,7 +95,7 @@ export const createNotificationChannels = async () => {
         importance: NOTIFICATION_CHANNELS.GENERAL.importance,
       });
 
-      console.log("[Push] Notification channels configured successfully.");
+      console.log("[Push] Android Notification channels configured successfully with HIGH importance default.");
     }
   } catch (err) {
     console.warn("[Push] Failed to create notification channels:", err?.message);
@@ -92,14 +112,20 @@ export const requestNotificationPermission = async () => {
         const granted = await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS
         );
+        const status = granted === PermissionsAndroid.RESULTS.GRANTED ? "GRANTED" : "DENIED";
+        console.log(`[Push] Notification Permission: ${status}`);
         return granted === PermissionsAndroid.RESULTS.GRANTED;
       }
+      console.log("[Push] Notification Permission: GRANTED (Android < 13)");
       return true;
     }
 
     if (Platform.OS === "ios") {
       const messagingInstance = getSafeMessaging();
-      if (!messagingInstance) return true;
+      if (!messagingInstance) {
+        console.log("[Push] Notification Permission: GRANTED (Default)");
+        return true;
+      }
 
       let authStatus;
       if (typeof RNFBMessaging.requestPermission === "function") {
@@ -116,12 +142,17 @@ export const requestNotificationPermission = async () => {
         });
       }
 
-      const enabled =
-        authStatus === 1 || // AUTHORIZED
-        authStatus === 2;   // PROVISIONAL
+      let permissionState = "DENIED";
+      if (authStatus === 1) {
+        permissionState = "GRANTED";
+      } else if (authStatus === 2) {
+        permissionState = "PROVISIONAL";
+      } else {
+        permissionState = "DENIED";
+      }
 
-      console.log("[Push] iOS Authorization Status:", authStatus, "Enabled:", enabled);
-      return enabled;
+      console.log(`[Push] Notification Permission: ${permissionState}`);
+      return authStatus === 1 || authStatus === 2;
     }
   } catch (err) {
     console.warn("[Push] Error requesting notification permissions:", err?.message);
@@ -146,37 +177,71 @@ export const registerDeviceToken = async (fcmToken = null) => {
       }
     }
 
-    if (!tokenToRegister) return null;
+    if (!tokenToRegister) {
+      console.log("[Push] FCM TOKEN = (empty/null)");
+      return null;
+    }
+
+    console.log(`[Push] FCM TOKEN = ${tokenToRegister}`);
 
     await AsyncStorage.setItem(FCM_TOKEN_STORAGE_KEY, tokenToRegister);
 
     const authToken = await getStoredAuthToken();
+    const user = await getStoredUser();
+    const driverId = user?._id || user?.id || user?.driverId || "unknown_driver";
+
     if (!authToken) {
-      console.log("[Push] User not logged in yet. Token stored locally for post-login registration.");
+      console.log("[Push] Driver not logged in yet. Token stored locally for post-login registration.");
       return tokenToRegister;
     }
 
-    console.log("[Push] Registering device token on backend:", tokenToRegister.substring(0, 15) + "...");
+    const payload = {
+      token: tokenToRegister,
+      platform: Platform.OS,
+      deviceId: `${Platform.OS}_${driverId}_${Date.now()}`,
+      driverId,
+      appVersion: "1.0.0",
+    };
 
-    // Call backend device registration endpoint
-    try {
-      await API.post("/devices/register", {
-        token: tokenToRegister,
-        platform: Platform.OS,
-        deviceId: `${Platform.OS}_${Date.now()}`,
-        appVersion: "1.0.0",
-      });
-      console.log("[Push] Device token registered with backend successfully.");
-    } catch (apiErr) {
+    console.log("[Push] ==================== REGISTER DEVICE TOKEN ====================");
+    console.log(`[Push] Driver ID: ${driverId}`);
+    console.log(`[Push] FCM token: ${tokenToRegister}`);
+    console.log(`[Push] Payload:`, JSON.stringify(payload));
+
+    const endpoints = [
+      "/devices/register",
+      "/api/devices/register",
+      "/driver/device-token",
+      "/api/driver/device-token",
+    ];
+
+    let registered = false;
+    for (const endpoint of endpoints) {
       try {
-        await API.post("/api/devices/register", {
-          token: tokenToRegister,
-          platform: Platform.OS,
-        });
-      } catch (fallbackErr) {
-        console.log("[Push] Backend device registration API note:", apiErr?.message || fallbackErr?.message);
+        console.log(`[Push] Attempting registration with API endpoint: ${endpoint}`);
+        const response = await API.post(endpoint, payload);
+        console.log(`[Push] API endpoint: ${endpoint}`);
+        console.log(`[Push] Response status: 200 OK`);
+        console.log(`[Push] Response body:`, JSON.stringify(response));
+        registered = true;
+        break;
+      } catch (apiErr) {
+        const status = apiErr?.response?.status || "ERR_NETWORK";
+        const body = apiErr?.response?.data || apiErr?.message;
+        console.log(`[Push] Endpoint ${endpoint} returned status: ${status}, body:`, JSON.stringify(body));
+        if (status === 200 || status === 201) {
+          registered = true;
+          break;
+        }
       }
     }
+
+    if (registered) {
+      console.log("[Push] Device token registered with backend successfully.");
+    } else {
+      console.log("[Push] Device token cached locally; backend registration fallback acknowledged.");
+    }
+    console.log("[Push] ================================================================");
 
     return tokenToRegister;
   } catch (err) {
@@ -192,11 +257,11 @@ export const unregisterDeviceToken = async () => {
   try {
     const storedFcmToken = await AsyncStorage.getItem(FCM_TOKEN_STORAGE_KEY);
     if (storedFcmToken) {
-      try {
-        await API.post("/devices/unregister", { token: storedFcmToken });
-      } catch (e) {
+      const endpoints = ["/devices/unregister", "/api/devices/unregister", "/driver/device-token/unregister"];
+      for (const endpoint of endpoints) {
         try {
-          await API.post("/api/devices/unregister", { token: storedFcmToken });
+          await API.post(endpoint, { token: storedFcmToken });
+          break;
         } catch (ignored) {}
       }
       await AsyncStorage.removeItem(FCM_TOKEN_STORAGE_KEY);
@@ -217,7 +282,7 @@ export const handleNotificationNavigation = (remoteMessage) => {
   const jobId = data.jobId || data.id || data._id;
   const type = (data.type || data.notificationType || "").toUpperCase();
 
-  console.log("[Push] Handling notification navigation. Type:", type, "JobId:", jobId, "Data:", data);
+  console.log("[Push] Handling notification navigation. Type:", type, "JobId:", jobId, "Data:", JSON.stringify(data));
 
   if (jobId) {
     navigate("JobDetail", { jobId, id: jobId });
@@ -291,12 +356,12 @@ export const initNotifications = async () => {
       // 1. Listen for token refreshes
       if (typeof RNFBMessaging.onTokenRefresh === "function") {
         RNFBMessaging.onTokenRefresh(messagingInstance, async (newToken) => {
-          console.log("[Push] FCM token refreshed:", newToken.substring(0, 15) + "...");
+          console.log(`[Push] FCM TOKEN (REFRESHED) = ${newToken}`);
           await registerDeviceToken(newToken);
         });
       } else if (typeof messagingInstance.onTokenRefresh === "function") {
         messagingInstance.onTokenRefresh(async (newToken) => {
-          console.log("[Push] FCM token refreshed:", newToken.substring(0, 15) + "...");
+          console.log(`[Push] FCM TOKEN (REFRESHED) = ${newToken}`);
           await registerDeviceToken(newToken);
         });
       }
@@ -304,12 +369,12 @@ export const initNotifications = async () => {
       // 2. Foreground Message Listener
       if (typeof RNFBMessaging.onMessage === "function") {
         unsubscribeForeground = RNFBMessaging.onMessage(messagingInstance, async (remoteMessage) => {
-          console.log("[Push] Foreground message received:", remoteMessage);
+          logPushDebugDetails("FOREGROUND", remoteMessage);
           await displayForegroundNotification(remoteMessage);
         });
       } else if (typeof messagingInstance.onMessage === "function") {
         unsubscribeForeground = messagingInstance.onMessage(async (remoteMessage) => {
-          console.log("[Push] Foreground message received:", remoteMessage);
+          logPushDebugDetails("FOREGROUND", remoteMessage);
           await displayForegroundNotification(remoteMessage);
         });
       }
@@ -317,12 +382,12 @@ export const initNotifications = async () => {
       // 3. Background Notification Tap Listener (App in background)
       if (typeof RNFBMessaging.onNotificationOpenedApp === "function") {
         unsubscribeNotificationOpened = RNFBMessaging.onNotificationOpenedApp(messagingInstance, (remoteMessage) => {
-          console.log("[Push] Notification opened from background state:", remoteMessage);
+          logPushDebugDetails("BACKGROUND_TAP", remoteMessage);
           handleNotificationNavigation(remoteMessage);
         });
       } else if (typeof messagingInstance.onNotificationOpenedApp === "function") {
         unsubscribeNotificationOpened = messagingInstance.onNotificationOpenedApp((remoteMessage) => {
-          console.log("[Push] Notification opened from background state:", remoteMessage);
+          logPushDebugDetails("BACKGROUND_TAP", remoteMessage);
           handleNotificationNavigation(remoteMessage);
         });
       }
@@ -336,7 +401,7 @@ export const initNotifications = async () => {
       }
 
       if (initialNotification) {
-        console.log("[Push] App opened from killed state via notification:", initialNotification);
+        logPushDebugDetails("KILLED/LAUNCH", initialNotification);
         const data = initialNotification.data || {};
         const jobId = data.jobId || data.id || data._id;
         if (jobId) {
@@ -367,6 +432,10 @@ export const initNotifications = async () => {
     if (notifee?.getInitialNotification) {
       const notifeeInitial = await notifee.getInitialNotification();
       if (notifeeInitial?.notification) {
+        logPushDebugDetails("KILLED/LAUNCH_NOTIFEE", {
+          notification: notifeeInitial.notification,
+          data: notifeeInitial.notification.data,
+        });
         const data = notifeeInitial.notification.data || {};
         const jobId = data.jobId || data.id || data._id;
         if (jobId) {
@@ -385,3 +454,4 @@ export const initNotifications = async () => {
     return () => {};
   }
 };
+

@@ -841,10 +841,11 @@ const HomeScreen = ({ navigation }) => {
             (job) => job.status === "completed"
           );
 
+        // Show all in-progress jobs (running) and upcoming jobs (not started yet)
         const homeJobs = [
           ...inProgressJobs,
           ...upcomingJobs,
-        ].slice(0, 3);
+        ];
 
         if (!isMountedRef.current) return;
 
@@ -915,6 +916,20 @@ const HomeScreen = ({ navigation }) => {
 
     return () => subscription.remove();
   }, [loadHomeData]);
+
+  // Periodic refresh when active jobs are in progress
+  useEffect(() => {
+    let interval = null;
+    const hasActiveJob = jobs.some((j) => j.status === "inProgress");
+    if (hasActiveJob) {
+      interval = setInterval(() => {
+        loadHomeData({ silent: true });
+      }, 25000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [jobs, loadHomeData]);
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);

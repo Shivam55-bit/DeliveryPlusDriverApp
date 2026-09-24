@@ -19,17 +19,37 @@ describe("Driver Hourly Earnings with 30-Minute Overtime Slabs", () => {
       expect(res.formattedFinalAmount).toBe("$200.00");
     });
 
-    test("2 Hr 01 Min (121 min) -> Overtime 1m, 1 Block, Extra $50.00, Final $250.00", () => {
+    test("2 Hr 01 Min (121 min) -> Overtime 1m (< 15 min), 0 Blocks, Extra $0.00, Final $200.00", () => {
       const assignment = { totalWorkedMinutes: 121, hourlyRate: 100, baseHours: 2, showDriverPrice: true };
       const res = calculateDriverHourlyEarnings(assignment, baseJob);
       expect(res.overtimeMinutes).toBe(1);
+      expect(res.overtimeBlocks).toBe(0);
+      expect(res.overtimeAmount).toBe(0);
+      expect(res.finalDriverAmount).toBe(200);
+      expect(res.formattedFinalAmount).toBe("$200.00");
+    });
+
+    test("2 Hr 14 Min (134 min) -> Overtime 14m (< 15 min), 0 Blocks, Extra $0.00, Final $200.00", () => {
+      const assignment = { totalWorkedMinutes: 134, hourlyRate: 100, baseHours: 2, showDriverPrice: true };
+      const res = calculateDriverHourlyEarnings(assignment, baseJob);
+      expect(res.overtimeMinutes).toBe(14);
+      expect(res.overtimeBlocks).toBe(0);
+      expect(res.overtimeAmount).toBe(0);
+      expect(res.finalDriverAmount).toBe(200);
+      expect(res.formattedFinalAmount).toBe("$200.00");
+    });
+
+    test("2 Hr 15 Min (135 min) -> Overtime 15m (15-30 min), 1 Block, Extra $50.00, Final $250.00", () => {
+      const assignment = { totalWorkedMinutes: 135, hourlyRate: 100, baseHours: 2, showDriverPrice: true };
+      const res = calculateDriverHourlyEarnings(assignment, baseJob);
+      expect(res.overtimeMinutes).toBe(15);
       expect(res.overtimeBlocks).toBe(1);
       expect(res.overtimeAmount).toBe(50);
       expect(res.finalDriverAmount).toBe(250);
       expect(res.formattedFinalAmount).toBe("$250.00");
     });
 
-    test("2 Hr 29 Min (149 min) -> Overtime 29m, 1 Block, Extra $50.00, Final $250.00", () => {
+    test("2 Hr 29 Min (149 min) -> Overtime 29m (15-30 min), 1 Block, Extra $50.00, Final $250.00", () => {
       const assignment = { totalWorkedMinutes: 149, hourlyRate: 100, baseHours: 2, showDriverPrice: true };
       const res = calculateDriverHourlyEarnings(assignment, baseJob);
       expect(res.overtimeMinutes).toBe(29);
@@ -39,7 +59,7 @@ describe("Driver Hourly Earnings with 30-Minute Overtime Slabs", () => {
       expect(res.formattedFinalAmount).toBe("$250.00");
     });
 
-    test("2 Hr 30 Min (150 min) -> Overtime 30m, 1 Block, Extra $50.00, Final $250.00", () => {
+    test("2 Hr 30 Min (150 min) -> Overtime 30m (15-30 min), 1 Block, Extra $50.00, Final $250.00", () => {
       const assignment = { totalWorkedMinutes: 150, hourlyRate: 100, baseHours: 2, showDriverPrice: true };
       const res = calculateDriverHourlyEarnings(assignment, baseJob);
       expect(res.overtimeMinutes).toBe(30);
@@ -49,17 +69,27 @@ describe("Driver Hourly Earnings with 30-Minute Overtime Slabs", () => {
       expect(res.formattedFinalAmount).toBe("$250.00");
     });
 
-    test("2 Hr 31 Min (151 min) -> Overtime 31m, 2 Blocks, Extra $100.00, Final $300.00", () => {
+    test("2 Hr 31 Min (151 min) -> Overtime 31m (15-31 min), 1 Block, Extra $50.00, Final $250.00", () => {
       const assignment = { totalWorkedMinutes: 151, hourlyRate: 100, baseHours: 2, showDriverPrice: true };
       const res = calculateDriverHourlyEarnings(assignment, baseJob);
       expect(res.overtimeMinutes).toBe(31);
+      expect(res.overtimeBlocks).toBe(1);
+      expect(res.overtimeAmount).toBe(50);
+      expect(res.finalDriverAmount).toBe(250);
+      expect(res.formattedFinalAmount).toBe("$250.00");
+    });
+
+    test("2 Hr 32 Min (152 min) -> Overtime 32m (32-60 min), 2 Blocks, Extra $100.00, Final $300.00", () => {
+      const assignment = { totalWorkedMinutes: 152, hourlyRate: 100, baseHours: 2, showDriverPrice: true };
+      const res = calculateDriverHourlyEarnings(assignment, baseJob);
+      expect(res.overtimeMinutes).toBe(32);
       expect(res.overtimeBlocks).toBe(2);
       expect(res.overtimeAmount).toBe(100);
       expect(res.finalDriverAmount).toBe(300);
       expect(res.formattedFinalAmount).toBe("$300.00");
     });
 
-    test("3 Hr 00 Min (180 min) -> Overtime 60m, 2 Blocks, Extra $100.00, Final $300.00", () => {
+    test("3 Hr 00 Min (180 min) -> Overtime 60m (32-60 min), 2 Blocks, Extra $100.00, Final $300.00", () => {
       const assignment = { totalWorkedMinutes: 180, hourlyRate: 100, baseHours: 2, showDriverPrice: true };
       const res = calculateDriverHourlyEarnings(assignment, baseJob);
       expect(res.overtimeMinutes).toBe(60);
@@ -69,7 +99,17 @@ describe("Driver Hourly Earnings with 30-Minute Overtime Slabs", () => {
       expect(res.formattedFinalAmount).toBe("$300.00");
     });
 
-    test("3 Hr 30 Min (210 min) -> Overtime 90m, 3 Blocks, Extra $150.00, Final $350.00", () => {
+    test("3 Hr 14 Min (194 min) -> Overtime 74m (1h 14m), 2 Blocks, Extra $100.00, Final $300.00", () => {
+      const assignment = { totalWorkedMinutes: 194, hourlyRate: 100, baseHours: 2, showDriverPrice: true };
+      const res = calculateDriverHourlyEarnings(assignment, baseJob);
+      expect(res.overtimeMinutes).toBe(74);
+      expect(res.overtimeBlocks).toBe(2);
+      expect(res.overtimeAmount).toBe(100);
+      expect(res.finalDriverAmount).toBe(300);
+      expect(res.formattedFinalAmount).toBe("$300.00");
+    });
+
+    test("3 Hr 30 Min (210 min) -> Overtime 90m (1h 30m), 3 Blocks, Extra $150.00, Final $350.00", () => {
       const assignment = { totalWorkedMinutes: 210, hourlyRate: 100, baseHours: 2, showDriverPrice: true };
       const res = calculateDriverHourlyEarnings(assignment, baseJob);
       expect(res.overtimeMinutes).toBe(90);
@@ -77,6 +117,26 @@ describe("Driver Hourly Earnings with 30-Minute Overtime Slabs", () => {
       expect(res.overtimeAmount).toBe(150);
       expect(res.finalDriverAmount).toBe(350);
       expect(res.formattedFinalAmount).toBe("$350.00");
+    });
+
+    test("3 Hr 31 Min (211 min) -> Overtime 91m (1h 31m), 3 Blocks, Extra $150.00, Final $350.00", () => {
+      const assignment = { totalWorkedMinutes: 211, hourlyRate: 100, baseHours: 2, showDriverPrice: true };
+      const res = calculateDriverHourlyEarnings(assignment, baseJob);
+      expect(res.overtimeMinutes).toBe(91);
+      expect(res.overtimeBlocks).toBe(3);
+      expect(res.overtimeAmount).toBe(150);
+      expect(res.finalDriverAmount).toBe(350);
+      expect(res.formattedFinalAmount).toBe("$350.00");
+    });
+
+    test("3 Hr 32 Min (212 min) -> Overtime 92m (1h 32m), 4 Blocks, Extra $200.00, Final $400.00", () => {
+      const assignment = { totalWorkedMinutes: 212, hourlyRate: 100, baseHours: 2, showDriverPrice: true };
+      const res = calculateDriverHourlyEarnings(assignment, baseJob);
+      expect(res.overtimeMinutes).toBe(92);
+      expect(res.overtimeBlocks).toBe(4);
+      expect(res.overtimeAmount).toBe(200);
+      expect(res.finalDriverAmount).toBe(400);
+      expect(res.formattedFinalAmount).toBe("$400.00");
     });
   });
 

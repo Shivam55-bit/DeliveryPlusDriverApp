@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -12,6 +12,7 @@ import {
   StatusBar,
   ActivityIndicator,
   Platform,
+  AppState,
 } from "react-native";
 import { launchCamera, launchImageLibrary } from "react-native-image-picker";
 import LinearGradient from "react-native-linear-gradient";
@@ -33,29 +34,63 @@ import {
 export default function CompleteJobScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
 
-  const jobId = route?.params?.jobId || route?.params?.id;
+  const jobId =
+    route?.params?.jobId ||
+    route?.params?.id ||
+    route?.params?.job?._id ||
+    route?.params?.job?.backendId ||
+    route?.params?.job?.id;
   const initialJob = route?.params?.job || {};
 
   const [currentJob, setCurrentJob] = useState(initialJob);
 
-  useEffect(() => {
-    const targetId = jobId || route?.params?.job?._id || route?.params?.job?.id;
-    const fetchLatest = async () => {
-      const user = await getStoredUser();
-      if (targetId) {
-        try {
-          const res = await API.get(`/jobs/${targetId}`);
-          const fetched = res.job || res.data?.job || res;
-          if (fetched && typeof fetched === "object") {
-            setCurrentJob(normalizeJob(fetched, user));
-          }
-        } catch (e) {
-          console.warn("[CompleteJobScreen] Error fetching latest job details:", e?.message);
+  const fetchLatestJob = useCallback(async () => {
+    const user = await getStoredUser();
+    const targetId =
+      jobId ||
+      route?.params?.job?._id ||
+      route?.params?.job?.backendId ||
+      route?.params?.job?.id;
+    if (targetId) {
+      try {
+        const res = await API.get(`/jobs/${targetId}`);
+        const fetched = res.job || res.data?.job || res;
+        if (fetched && typeof fetched === "object") {
+          const normalized = normalizeJob(fetched, user);
+          setCurrentJob((prevJob) => {
+            if (prevJob?.myAssignment?.startedAt && !normalized?.myAssignment?.startedAt) {
+              normalized.myAssignment.startedAt = prevJob.myAssignment.startedAt;
+              normalized.myAssignment.isInProgress = true;
+            }
+            if (prevJob?.startedAt && !normalized?.startedAt) {
+              normalized.startedAt = prevJob.startedAt;
+            }
+            return normalized;
+          });
         }
+      } catch (e) {
+        console.warn("[CompleteJobScreen] Error fetching latest job details:", e?.message);
       }
+    }
+  }, [jobId, route?.params?.job]);
+
+  useEffect(() => {
+    fetchLatestJob();
+  }, [fetchLatestJob]);
+
+  // AppState change handling: Re-fetch latest job pricing when app resumes from background
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextAppState) => {
+      if (nextAppState === "active") {
+        console.log("[CompleteJobScreen] App returned to active. Re-fetching latest pricing for settlement...");
+        fetchLatestJob();
+      }
+    });
+
+    return () => {
+      subscription?.remove();
     };
-    fetchLatest();
-  }, [jobId, route?.params?.job?._id, route?.params?.job?.id]);
+  }, [fetchLatestJob]);
 
   // Form State
   const initialCustomerName =
@@ -71,7 +106,7 @@ export default function CompleteJobScreen({ navigation, route }) {
     route?.params?.customerSignature || route?.params?.customerEndSignature || null
   );
 
-  // Sync if route params update
+  // Sync if route params update (signatures / customer name) without overwriting fresh job
   useEffect(() => {
     if (route?.params?.customerSignature || route?.params?.customerEndSignature) {
       setCustomerSignature(
@@ -83,7 +118,7 @@ export default function CompleteJobScreen({ navigation, route }) {
         route.params.customerSignatureName || route.params.customerName
       );
     }
-    if (route?.params?.job) {
+    if (route?.params?.job && !currentJob?._id && !currentJob?.backendId) {
       setCurrentJob(route.params.job);
     }
   }, [route?.params]);
@@ -108,12 +143,13 @@ export default function CompleteJobScreen({ navigation, route }) {
       : "";
   const [paymentMethod, setPaymentMethod] = useState("cash"); // cash | online | other
   const [amountReceived, setAmountReceived] = useState(initialAmount);
+  const [isAmountManuallyEdited, setIsAmountManuallyEdited] = useState(false);
 
   useEffect(() => {
-    if (pricingSummary.canShowPrice && pricingSummary.amountToCollect > 0 && !amountReceived) {
+    if (pricingSummary.canShowPrice && pricingSummary.amountToCollect > 0 && !isAmountManuallyEdited) {
       setAmountReceived(pricingSummary.amountToCollect.toFixed(2));
     }
-  }, [pricingSummary.canShowPrice, pricingSummary.amountToCollect]);
+  }, [pricingSummary.canShowPrice, pricingSummary.amountToCollect, isAmountManuallyEdited]);
   const [paymentNotes, setPaymentNotes] = useState("");
   const [paymentProofPhoto, setPaymentProofPhoto] = useState(null);
 
@@ -372,6 +408,18 @@ export default function CompleteJobScreen({ navigation, route }) {
 
       await API.post(`/jobs/${targetJobId}/complete`, payload);
 
+      // Immediately fetch fresh authoritative completed job data from backend
+      try {
+        const user = await getStoredUser();
+        const refreshRes = await API.get(`/jobs/${targetJobId}`);
+        const freshData = refreshRes.job || refreshRes.data?.job || refreshRes;
+        if (freshData && typeof freshData === "object") {
+          setCurrentJob(normalizeJob(freshData, user));
+        }
+      } catch (refreshErr) {
+        console.warn("[CompleteJobScreen] Post-complete refresh error:", refreshErr?.message);
+      }
+
       Alert.alert("Success", "Job completed and submitted successfully!", [
         {
           text: "OK",
@@ -559,11 +607,36 @@ export default function CompleteJobScreen({ navigation, route }) {
                     </View>
                   ) : null}
 
+                  <View style={styles.breakdownItemRow}>
+                    <Text style={[styles.breakdownItemLabel, { fontWeight: "600", color: "#334155" }]}>
+                      Total Estimated Cost
+                    </Text>
+                    <Text style={[styles.breakdownItemVal, { fontWeight: "600", color: "#334155" }]}>
+                      {pricingSummary.formattedEstimatedTotal}
+                    </Text>
+                  </View>
+
+                  <View style={styles.breakdownDivider} />
+
+                  <View style={styles.breakdownItemRow}>
+                    <Text style={styles.breakdownItemLabel}>Actual Duration</Text>
+                    <Text style={styles.breakdownItemVal}>
+                      {pricingSummary.formattedWorkedTime}
+                    </Text>
+                  </View>
+
                   {pricingSummary.overtimeMinutes > 0 ? (
                     <View style={styles.breakdownItemRow}>
-                      <Text style={styles.breakdownItemLabel}>
-                        Overtime ({pricingSummary.formattedOvertimeMinutes})
+                      <Text style={styles.breakdownItemLabel}>Extra Time</Text>
+                      <Text style={styles.breakdownItemVal}>
+                        {pricingSummary.formattedOvertimeMinutes}
                       </Text>
+                    </View>
+                  ) : null}
+
+                  {pricingSummary.overtimeMinutes > 0 ? (
+                    <View style={styles.breakdownItemRow}>
+                      <Text style={styles.breakdownItemLabel}>Overtime Charge</Text>
                       <Text style={[styles.breakdownItemVal, { color: "#D97706", fontWeight: "700" }]}>
                         {pricingSummary.formattedOvertimeAmount}
                       </Text>
@@ -634,7 +707,10 @@ export default function CompleteJobScreen({ navigation, route }) {
               />
               <TextInput
                 value={amountReceived}
-                onChangeText={setAmountReceived}
+                onChangeText={(text) => {
+                  setIsAmountManuallyEdited(true);
+                  setAmountReceived(text);
+                }}
                 placeholder="Enter amount collected"
                 placeholderTextColor="#94A3B8"
                 keyboardType="numeric"

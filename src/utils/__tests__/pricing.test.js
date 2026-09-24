@@ -358,26 +358,47 @@ describe("Driver Pricing Logic", () => {
       expect(s60.overtimeAmount).toBe(0);
       expect(s60.finalTotal).toBe(1600);
 
-      // 61 mins -> 1 OT block ($500) -> $2100
+      // 61 mins -> 1 min OT (<15 min) -> 0 OT blocks ($0) -> $1600
       const s61 = getJobPricingSummary(job106, { totalWorkedMinutes: 61 });
       expect(s61.overtimeMinutes).toBe(1);
-      expect(s61.overtimeBlocks).toBe(1);
-      expect(s61.overtimeAmount).toBe(500);
-      expect(s61.finalTotal).toBe(2100);
+      expect(s61.overtimeBlocks).toBe(0);
+      expect(s61.overtimeAmount).toBe(0);
+      expect(s61.finalTotal).toBe(1600);
 
-      // 90 mins -> 1 OT block ($500) -> $2100
+      // 74 mins -> 14 mins OT (<15 min) -> 0 OT blocks ($0) -> $1600
+      const s74 = getJobPricingSummary(job106, { totalWorkedMinutes: 74 });
+      expect(s74.overtimeMinutes).toBe(14);
+      expect(s74.overtimeBlocks).toBe(0);
+      expect(s74.overtimeAmount).toBe(0);
+      expect(s74.finalTotal).toBe(1600);
+
+      // 75 mins -> 15 mins OT (15-30 min) -> 1 OT block ($500) -> $2100
+      const s75 = getJobPricingSummary(job106, { totalWorkedMinutes: 75 });
+      expect(s75.overtimeMinutes).toBe(15);
+      expect(s75.overtimeBlocks).toBe(1);
+      expect(s75.overtimeAmount).toBe(500);
+      expect(s75.finalTotal).toBe(2100);
+
+      // 90 mins -> 30 mins OT (15-30 min) -> 1 OT block ($500) -> $2100
       const s90 = getJobPricingSummary(job106, { totalWorkedMinutes: 90 });
       expect(s90.overtimeMinutes).toBe(30);
       expect(s90.overtimeBlocks).toBe(1);
       expect(s90.overtimeAmount).toBe(500);
       expect(s90.finalTotal).toBe(2100);
 
-      // 91 mins -> 2 OT blocks ($1000) -> $2600
+      // 91 mins -> 31 mins OT (15-31 min) -> 1 OT block ($500) -> $2100
       const s91 = getJobPricingSummary(job106, { totalWorkedMinutes: 91 });
       expect(s91.overtimeMinutes).toBe(31);
-      expect(s91.overtimeBlocks).toBe(2);
-      expect(s91.overtimeAmount).toBe(1000);
-      expect(s91.finalTotal).toBe(2600);
+      expect(s91.overtimeBlocks).toBe(1);
+      expect(s91.overtimeAmount).toBe(500);
+      expect(s91.finalTotal).toBe(2100);
+
+      // 92 mins -> 32 mins OT (32-60 min) -> 2 OT blocks ($1000) -> $2600
+      const s92 = getJobPricingSummary(job106, { totalWorkedMinutes: 92 });
+      expect(s92.overtimeMinutes).toBe(32);
+      expect(s92.overtimeBlocks).toBe(2);
+      expect(s92.overtimeAmount).toBe(1000);
+      expect(s92.finalTotal).toBe(2600);
     });
 
     test("18. Partial Start API response merged over full job preserves callout & stairs", () => {
@@ -798,4 +819,328 @@ describe("Driver Pricing Logic", () => {
       });
     });
   });
+
+  describe("Complete & End Job Screen Overtime Pricing Acceptance Tests (Base $100, Callout $50, Stairs $50 -> Initial $200, Rate $100/hr)", () => {
+    const baseJob = {
+      _id: "complete_job_test_id",
+      jobNumber: "JOB-COMPLETE-01",
+      jobType: "moving",
+      status: "in_progress",
+      showDriverPrice: true,
+      driverPriceType: "hourly",
+      hourlyRate: 100,
+      estimatedHours: 1,
+      minimumCost: 100,
+      calloutCharge: 50,
+      stairsFee: 50,
+      minimumEstimatedCost: 200,
+    };
+
+    test("Case A: Base duration = 60, Actual = 60 -> Final = $200 (Overtime = $0)", () => {
+      const summary = getJobPricingSummary(baseJob, { totalWorkedMinutes: 60 });
+      expect(summary.estimatedTotal).toBe(200);
+      expect(summary.minimumDurationMinutes).toBe(60);
+      expect(summary.actualWorkedMinutes).toBe(60);
+      expect(summary.extraMinutes).toBe(0);
+      expect(summary.hourlyRate).toBe(100);
+      expect(summary.overtimeAmount).toBe(0);
+      expect(summary.finalAmount).toBe(200);
+      expect(summary.amountToCollect).toBe(200);
+    });
+
+    test("Case B: Actual = 74 -> Final = $200 (Overtime = $0, <15 min grace)", () => {
+      const summary = getJobPricingSummary(baseJob, { totalWorkedMinutes: 74 });
+      expect(summary.estimatedTotal).toBe(200);
+      expect(summary.minimumDurationMinutes).toBe(60);
+      expect(summary.actualWorkedMinutes).toBe(74);
+      expect(summary.extraMinutes).toBe(14);
+      expect(summary.hourlyRate).toBe(100);
+      expect(summary.overtimeAmount).toBe(0);
+      expect(summary.finalAmount).toBe(200);
+      expect(summary.amountToCollect).toBe(200);
+    });
+
+    test("Case C: Actual = 75 (Extra 15m) -> Final = $250 (Overtime = $50, half-hour slab)", () => {
+      const summary = getJobPricingSummary(baseJob, { totalWorkedMinutes: 75 });
+      expect(summary.estimatedTotal).toBe(200);
+      expect(summary.minimumDurationMinutes).toBe(60);
+      expect(summary.actualWorkedMinutes).toBe(75);
+      expect(summary.extraMinutes).toBe(15);
+      expect(summary.hourlyRate).toBe(100);
+      expect(summary.overtimeAmount).toBe(50);
+      expect(summary.finalAmount).toBe(250);
+      expect(summary.amountToCollect).toBe(250);
+    });
+
+    test("Case D: Actual = 90 (Extra 30m) -> Final = $250 (Overtime = $50, half-hour slab)", () => {
+      const summary = getJobPricingSummary(baseJob, { totalWorkedMinutes: 90 });
+      expect(summary.estimatedTotal).toBe(200);
+      expect(summary.minimumDurationMinutes).toBe(60);
+      expect(summary.actualWorkedMinutes).toBe(90);
+      expect(summary.extraMinutes).toBe(30);
+      expect(summary.hourlyRate).toBe(100);
+      expect(summary.overtimeAmount).toBe(50);
+      expect(summary.finalAmount).toBe(250);
+      expect(summary.amountToCollect).toBe(250);
+    });
+
+    test("Case E1: Actual = 91 (Extra 31m) -> Final = $250 (Overtime = $50, half-hour slab 15-31m)", () => {
+      const summary = getJobPricingSummary(baseJob, { totalWorkedMinutes: 91 });
+      expect(summary.estimatedTotal).toBe(200);
+      expect(summary.minimumDurationMinutes).toBe(60);
+      expect(summary.actualWorkedMinutes).toBe(91);
+      expect(summary.extraMinutes).toBe(31);
+      expect(summary.hourlyRate).toBe(100);
+      expect(summary.overtimeAmount).toBe(50);
+      expect(summary.finalAmount).toBe(250);
+      expect(summary.amountToCollect).toBe(250);
+    });
+
+    test("Case E2: Actual = 92 (Extra 32m) -> Final = $300 (Overtime = $100, full-hour slab 32-60m)", () => {
+      const summary = getJobPricingSummary(baseJob, { totalWorkedMinutes: 92 });
+      expect(summary.estimatedTotal).toBe(200);
+      expect(summary.minimumDurationMinutes).toBe(60);
+      expect(summary.actualWorkedMinutes).toBe(92);
+      expect(summary.extraMinutes).toBe(32);
+      expect(summary.hourlyRate).toBe(100);
+      expect(summary.overtimeAmount).toBe(100);
+      expect(summary.finalAmount).toBe(300);
+      expect(summary.amountToCollect).toBe(300);
+    });
+
+    test("Case 76 Min Current Real Job: Actual = 76 (Extra 16m) -> Estimated = $200, Overtime = $50, Final = $250", () => {
+      const summary = getJobPricingSummary(baseJob, { totalWorkedMinutes: 76 });
+      expect(summary.estimatedTotal).toBe(200);
+      expect(summary.minimumDurationMinutes).toBe(60);
+      expect(summary.actualWorkedMinutes).toBe(76);
+      expect(summary.formattedWorkedTime).toBe("76 Min");
+      expect(summary.extraMinutes).toBe(16);
+      expect(summary.formattedOvertimeMinutes).toBe("16 Min");
+      expect(summary.hourlyRate).toBe(100);
+      expect(summary.overtimeAmount).toBe(50);
+      expect(summary.formattedOvertimeAmount).toBe("$50.00");
+      expect(summary.finalAmount).toBe(250);
+      expect(summary.formattedFinalAmount).toBe("$250.00");
+      expect(summary.amountToCollect).toBe(250);
+      expect(summary.formattedAmountToCollect).toBe("$250.00");
+    });
+
+    test("Active in-progress job calculates preview from startedAt (76 min elapsed, totalWorkedMinutes=0)", () => {
+      const startedAt76MinAgo = new Date(Date.now() - 76 * 60 * 1000).toISOString();
+      const activeAssignment = {
+        status: "in_progress",
+        startedAt: startedAt76MinAgo,
+        completedAt: null,
+        totalWorkedMinutes: 0,
+      };
+
+      const summary = getJobPricingSummary(baseJob, activeAssignment);
+      expect(summary.estimatedTotal).toBe(200);
+      expect(summary.actualWorkedMinutes).toBe(76);
+      expect(summary.formattedWorkedTime).toBe("76 Min");
+      expect(summary.extraMinutes).toBe(16);
+      expect(summary.formattedOvertimeMinutes).toBe("16 Min");
+      expect(summary.overtimeAmount).toBe(50);
+      expect(summary.formattedOvertimeAmount).toBe("$50.00");
+      expect(summary.finalAmount).toBe(250);
+      expect(summary.amountToCollect).toBe(250);
+    });
+
+    test("Backend authoritative value priority upon completion", () => {
+      const completedAssignment = {
+        status: "completed",
+        isCompleted: true,
+        startedAt: "2026-09-23T10:00:00.000Z",
+        completedAt: "2026-09-23T11:16:00.000Z",
+        totalWorkedMinutes: 76,
+        pricingSnapshot: {
+          extraMinutes: 16,
+          overtimeAmount: 50,
+          finalAmount: 250,
+        },
+      };
+
+      const summary = getJobPricingSummary(baseJob, completedAssignment);
+      expect(summary.actualWorkedMinutes).toBe(76);
+      expect(summary.extraMinutes).toBe(16);
+      expect(summary.overtimeAmount).toBe(50);
+      expect(summary.finalAmount).toBe(250);
+    });
+  });
+
+  describe("JOB-00120 Real Test Case & Boundary Tests (Rate $250/hr, Base 60m, Callout $125, Stairs $50 -> Initial $425)", () => {
+    const job120 = {
+      _id: "job_00120_id",
+      jobNumber: "JOB-00120",
+      jobType: "moving",
+      status: "in_progress",
+      showDriverPrice: true,
+      driverPriceType: "hourly",
+      hourlyRate: 250,
+      estimatedHours: 1,
+      minimumCost: 250,
+      calloutCharge: 125,
+      stairsFee: 50,
+      travelBackFee: 0,
+      minimumEstimatedCost: 425,
+    };
+
+    test("JOB-00120 Completed Real Job: Actual 91 Min (Extra 31m) -> Overtime = $125, Final = $550", () => {
+      const summary = getJobPricingSummary(job120, { totalWorkedMinutes: 91 });
+      expect(summary.baseAmount).toBe(250);
+      expect(summary.calloutFee).toBe(125);
+      expect(summary.stairsFee).toBe(50);
+      expect(summary.estimatedTotal).toBe(425);
+      expect(summary.initialTotal).toBe(425);
+      expect(summary.actualWorkedMinutes).toBe(91);
+      expect(summary.formattedWorkedTime).toBe("91 Min");
+      expect(summary.extraMinutes).toBe(31);
+      expect(summary.formattedOvertimeMinutes).toBe("31 Min");
+      expect(summary.hourlyRate).toBe(250);
+      expect(summary.overtimeBlocks).toBe(1);
+      expect(summary.overtimeAmount).toBe(125);
+      expect(summary.formattedOvertimeAmount).toBe("$125.00");
+      expect(summary.finalAmount).toBe(550);
+      expect(summary.formattedFinalAmount).toBe("$550.00");
+      expect(summary.amountToCollect).toBe(550);
+      expect(summary.formattedAmountToCollect).toBe("$550.00");
+    });
+
+    test("Boundary 1: Actual 74 Min (Extra 14m) -> Overtime = $0, Final = $425", () => {
+      const summary = getJobPricingSummary(job120, { totalWorkedMinutes: 74 });
+      expect(summary.estimatedTotal).toBe(425);
+      expect(summary.actualWorkedMinutes).toBe(74);
+      expect(summary.extraMinutes).toBe(14);
+      expect(summary.overtimeBlocks).toBe(0);
+      expect(summary.overtimeAmount).toBe(0);
+      expect(summary.finalAmount).toBe(425);
+      expect(summary.amountToCollect).toBe(425);
+    });
+
+    test("Boundary 2: Actual 75 Min (Extra 15m) -> Overtime = $125, Final = $550", () => {
+      const summary = getJobPricingSummary(job120, { totalWorkedMinutes: 75 });
+      expect(summary.estimatedTotal).toBe(425);
+      expect(summary.actualWorkedMinutes).toBe(75);
+      expect(summary.extraMinutes).toBe(15);
+      expect(summary.overtimeBlocks).toBe(1);
+      expect(summary.overtimeAmount).toBe(125);
+      expect(summary.finalAmount).toBe(550);
+      expect(summary.amountToCollect).toBe(550);
+    });
+
+    test("Boundary 3: Actual 90 Min (Extra 30m) -> Overtime = $125, Final = $550", () => {
+      const summary = getJobPricingSummary(job120, { totalWorkedMinutes: 90 });
+      expect(summary.estimatedTotal).toBe(425);
+      expect(summary.actualWorkedMinutes).toBe(90);
+      expect(summary.extraMinutes).toBe(30);
+      expect(summary.overtimeBlocks).toBe(1);
+      expect(summary.overtimeAmount).toBe(125);
+      expect(summary.finalAmount).toBe(550);
+      expect(summary.amountToCollect).toBe(550);
+    });
+
+    test("Boundary 4: Actual 91 Min (Extra 31m) -> Overtime = $125, Final = $550 (31m is HALF RATE)", () => {
+      const summary = getJobPricingSummary(job120, { totalWorkedMinutes: 91 });
+      expect(summary.estimatedTotal).toBe(425);
+      expect(summary.actualWorkedMinutes).toBe(91);
+      expect(summary.extraMinutes).toBe(31);
+      expect(summary.overtimeBlocks).toBe(1);
+      expect(summary.overtimeAmount).toBe(125);
+      expect(summary.finalAmount).toBe(550);
+      expect(summary.amountToCollect).toBe(550);
+    });
+
+    test("Boundary 5: Actual 92 Min (Extra 32m) -> Overtime = $250, Final = $675 (32m is FULL RATE)", () => {
+      const summary = getJobPricingSummary(job120, { totalWorkedMinutes: 92 });
+      expect(summary.estimatedTotal).toBe(425);
+      expect(summary.actualWorkedMinutes).toBe(92);
+      expect(summary.extraMinutes).toBe(32);
+      expect(summary.overtimeBlocks).toBe(2);
+      expect(summary.overtimeAmount).toBe(250);
+      expect(summary.finalAmount).toBe(675);
+      expect(summary.amountToCollect).toBe(675);
+    });
+
+    test("Boundary 6: Actual 120 Min (Extra 60m) -> Overtime = $250, Final = $675", () => {
+      const summary = getJobPricingSummary(job120, { totalWorkedMinutes: 120 });
+      expect(summary.estimatedTotal).toBe(425);
+      expect(summary.actualWorkedMinutes).toBe(120);
+      expect(summary.extraMinutes).toBe(60);
+      expect(summary.overtimeBlocks).toBe(2);
+      expect(summary.overtimeAmount).toBe(250);
+      expect(summary.finalAmount).toBe(675);
+      expect(summary.amountToCollect).toBe(675);
+    });
+
+    test("JOB-00120 Active Preview from startedAt (91 mins elapsed) calculates Extra 31m, OT $125, Final $550", () => {
+      const startedAt91MinAgo = new Date(Date.now() - 91 * 60 * 1000).toISOString();
+      const activeAssignment = {
+        status: "in_progress",
+        startedAt: startedAt91MinAgo,
+        completedAt: null,
+        totalWorkedMinutes: 0,
+      };
+
+      const summary = getJobPricingSummary(job120, activeAssignment);
+      expect(summary.estimatedTotal).toBe(425);
+      expect(summary.actualWorkedMinutes).toBe(91);
+      expect(summary.formattedWorkedTime).toBe("91 Min");
+      expect(summary.extraMinutes).toBe(31);
+      expect(summary.formattedOvertimeMinutes).toBe("31 Min");
+      expect(summary.overtimeAmount).toBe(125);
+      expect(summary.formattedOvertimeAmount).toBe("$125.00");
+      expect(summary.finalAmount).toBe(550);
+      expect(summary.amountToCollect).toBe(550);
+    });
+
+    test("JOB-00120 Backend authoritative values preferred on completion", () => {
+      const completedAssignment = {
+        status: "completed",
+        isCompleted: true,
+        startedAt: "2026-09-23T10:00:00.000Z",
+        completedAt: "2026-09-23T11:31:00.000Z",
+        totalWorkedMinutes: 91,
+        pricingSnapshot: {
+          extraMinutes: 31,
+          overtimeAmount: 125,
+          finalAmount: 550,
+        },
+      };
+
+      const summary = getJobPricingSummary(job120, completedAssignment);
+      expect(summary.actualWorkedMinutes).toBe(91);
+      expect(summary.extraMinutes).toBe(31);
+      expect(summary.overtimeAmount).toBe(125);
+      expect(summary.finalAmount).toBe(550);
+    });
+
+    test("JOB-00120 detects and reports backend pricing mismatch if backend still returns old $250 for 31m", () => {
+      const consoleWarnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+      const completedWithOldBackendBug = {
+        status: "completed",
+        isCompleted: true,
+        startedAt: "2026-09-23T10:00:00.000Z",
+        completedAt: "2026-09-23T11:31:00.000Z",
+        totalWorkedMinutes: 91,
+        pricingSnapshot: {
+          extraMinutes: 31,
+          overtimeAmount: 250, // old backend bug at 31 min
+          finalAmount: 675,
+        },
+      };
+
+      const summary = getJobPricingSummary(job120, completedWithOldBackendBug);
+      // Authoritative backend value is used
+      expect(summary.overtimeAmount).toBe(250);
+      expect(summary.finalAmount).toBe(675);
+      // Mismatch was clearly logged/identified
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("[PRICING MISMATCH] Backend overtimeAmount ($250.00) differs from app rule ($125.00)")
+      );
+
+      consoleWarnSpy.mockRestore();
+    });
+  });
 });
+

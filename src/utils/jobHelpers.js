@@ -822,6 +822,14 @@ export const calculateJobDuration = (job = {}) => {
     }
   }
 
+  if (startVal) {
+    const startTime = new Date(startVal).getTime();
+    if (Number.isFinite(startTime)) {
+      const diffMinutes = Math.max(0, Math.floor((Date.now() - startTime) / (1000 * 60)));
+      return formatDuration(diffMinutes, false);
+    }
+  }
+
   return "0 Min";
 };
 
@@ -847,6 +855,14 @@ export const calculateDriverDuration = (myAssignment = {}) => {
 
     if (Number.isFinite(startTime) && Number.isFinite(endTime) && endTime >= startTime) {
       const diffMinutes = Math.floor((endTime - startTime) / (1000 * 60));
+      return formatDuration(diffMinutes, false);
+    }
+  }
+
+  if (startVal) {
+    const startTime = new Date(startVal).getTime();
+    if (Number.isFinite(startTime)) {
+      const diffMinutes = Math.max(0, Math.floor((Date.now() - startTime) / (1000 * 60)));
       return formatDuration(diffMinutes, false);
     }
   }
@@ -1317,21 +1333,20 @@ export const normalizeJob = (raw = {}, currentUser = null) => {
         0,
       minimumCharge: raw.pricing?.minimumCharge ?? raw.minimumCharge ?? 0,
       minimumEstimatedCost:
+        priceInfo.pricingSummary.estimatedTotal ??
         raw.pricing?.minimumEstimatedCost ??
         raw.pricing?.estimatedTotal ??
         raw.pricing?.estimatedCost ??
         raw.minimumEstimatedCost ??
         raw.estimatedTotal ??
         raw.estimatedCost ??
-        raw.billing?.minimumEstimatedCost ??
-        raw.billing?.estimatedTotal ??
         0,
       estimatedTotal:
+        priceInfo.pricingSummary.estimatedTotal ??
         raw.pricing?.estimatedTotal ??
         raw.pricing?.minimumEstimatedCost ??
         raw.estimatedTotal ??
         raw.minimumEstimatedCost ??
-        raw.billing?.estimatedTotal ??
         0,
       extraTime: raw.pricing?.extraTime ?? raw.extraTime,
       extraTimeCharge: raw.pricing?.extraTimeCharge ?? raw.extraTimeCharge ?? 0,
@@ -1339,20 +1354,30 @@ export const normalizeJob = (raw = {}, currentUser = null) => {
       amountPaid: raw.pricing?.amountPaid ?? raw.amountPaid,
       outstandingAmount: raw.pricing?.outstandingAmount ?? raw.outstandingAmount,
     },
+
+    hourlyRate: priceInfo.pricingSummary.hourlyRate,
+    minimumCost: priceInfo.pricingSummary.baseAmount,
+    minimumLabourCost: priceInfo.pricingSummary.baseAmount,
+    calloutFee: priceInfo.pricingSummary.calloutFee,
+    calloutCharge: priceInfo.pricingSummary.calloutFee,
+    stairsFee: priceInfo.pricingSummary.stairsFee,
+    stairsCharge: priceInfo.pricingSummary.stairsFee,
+    travelBackFee: priceInfo.pricingSummary.travelBackFee,
+    travelBackCharge: priceInfo.pricingSummary.travelBackFee,
+    estimatedTotal: priceInfo.pricingSummary.estimatedTotal,
+    minimumEstimatedCost: priceInfo.pricingSummary.estimatedTotal,
+    finalAmount: priceInfo.pricingSummary.finalAmount,
+    amountToCollect: priceInfo.pricingSummary.amountToCollect,
   };
 };
 
 /**
  * Calculates final driver earnings for hourly jobs based strictly on the current driver's
- * own work session (myAssignment), applying 30-minute overtime slabs.
- *
- * Rules:
- * - Base duration = baseHours (default 2 Hr if unspecified)
- * - Base Amount = hourlyRate * baseHours
- * - Overtime = max(0, myAssignment.totalWorkedMinutes - (baseHours * 60))
- * - Overtime Blocks = ceil(overtimeMinutes / 30)
- * - Overtime Charge = overtimeBlocks * (hourlyRate / 2)
- * - Final Driver Amount = Base Amount + Overtime Charge
+ * own work session (myAssignment), applying the latest approved overtime rules:
+ * - Extra 0–14 min: $0 (0 blocks)
+ * - Extra 15–31 min: Half Hourly Rate (hourlyRate / 2, 1 block)
+ * - Extra 32–60 min: Full Hourly Rate (hourlyRate, 2 blocks)
+ * - Then repeat for each additional full extra hour.
  *
  * Multi-driver isolation: Only uses myAssignment's own session time, never global job times.
  * Supports pricingSnapshot from backend and graceful fallbacks.
@@ -1374,21 +1399,18 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
 
   // 1. Hourly Rate
   const rawHourlyRate =
-    snapshot?.hourlyRate ??
-    assignment?.hourlyRate ??
     jobPricing?.hourlyRate ??
     job?.hourlyRate ??
+    billing?.hourlyRate ??
     job?.raw?.pricing?.hourlyRate ??
     job?.raw?.hourlyRate ??
+    snapshot?.hourlyRate ??
+    assignment?.hourlyRate ??
     0;
   const hourlyRate = Math.max(0, Number(rawHourlyRate) || 0);
 
   // 2. Base Hours
   const rawBaseHours =
-    snapshot?.baseHours ??
-    snapshot?.estimatedHours ??
-    assignment?.baseHours ??
-    assignment?.estimatedHours ??
     jobPricing?.estimatedHours ??
     jobPricing?.baseHours ??
     jobPricing?.minimumChargeHours ??
@@ -1401,16 +1423,16 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
     job?.raw?.pricing?.baseHours ??
     job?.raw?.estimatedHours ??
     job?.raw?.baseHours ??
+    snapshot?.baseHours ??
+    snapshot?.estimatedHours ??
+    assignment?.baseHours ??
+    assignment?.estimatedHours ??
     (isHourly ? 1 : 1);
   const baseHours = Math.max(0, Number(rawBaseHours) || (isHourly ? 1 : 1));
   const baseMinutes = Math.round(baseHours * 60);
 
   // 3. Base Amount / Minimum Cost (Labour only)
   const rawBaseAmount =
-    snapshot?.baseAmount ??
-    snapshot?.minimumCost ??
-    snapshot?.minimumLaborCost ??
-    snapshot?.minimumLabourCost ??
     jobPricing?.minimumLabourCost ??
     jobPricing?.minimumLaborCost ??
     jobPricing?.minimumLaborCharge ??
@@ -1433,33 +1455,17 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
     job?.raw?.minimumLabourCost ??
     job?.raw?.minimumLaborCost ??
     job?.raw?.minimumCost ??
+    snapshot?.baseAmount ??
+    snapshot?.minimumCost ??
+    snapshot?.minimumLaborCost ??
+    snapshot?.minimumLabourCost ??
     (isHourly ? hourlyRate * baseHours : 0);
   const baseAmount = Math.max(0, Number(rawBaseAmount) || (isHourly ? hourlyRate * baseHours : 0));
 
-  // 4. Line Items / Additional Fees
+  // 4. Line Items / Additional Fees - Fresh API fields take priority over stale snapshot
   const calloutFee = Math.max(
     0,
     Number(
-      snapshot?.calloutFee ??
-      snapshot?.calloutCharge ??
-      snapshot?.callOutFee ??
-      snapshot?.callOutCharge ??
-      snapshot?.callout_fee ??
-      snapshot?.callout_charge ??
-      snapshot?.call_out_fee ??
-      snapshot?.call_out_charge ??
-      snapshot?.calloutAmount ??
-      snapshot?.callOutAmount ??
-      snapshot?.calloutPrice ??
-      snapshot?.callOutPrice ??
-      snapshot?.callout ??
-      snapshot?.callOut ??
-      snapshot?.pricing?.calloutFee ??
-      snapshot?.pricing?.calloutCharge ??
-      snapshot?.pricing?.callOutFee ??
-      snapshot?.pricing?.callOutCharge ??
-      snapshot?.pricing?.callout ??
-      snapshot?.pricing?.callOut ??
       jobPricing?.calloutCharge ??
       jobPricing?.calloutFee ??
       jobPricing?.callOutCharge ??
@@ -1502,6 +1508,26 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
       job?.raw?.billing?.callOutFee ??
       job?.raw?.billing?.call_out_charge ??
       job?.raw?.billing?.call_out_fee ??
+      snapshot?.calloutFee ??
+      snapshot?.calloutCharge ??
+      snapshot?.callOutFee ??
+      snapshot?.callOutCharge ??
+      snapshot?.callout_fee ??
+      snapshot?.callout_charge ??
+      snapshot?.call_out_fee ??
+      snapshot?.call_out_charge ??
+      snapshot?.calloutAmount ??
+      snapshot?.callOutAmount ??
+      snapshot?.calloutPrice ??
+      snapshot?.callOutPrice ??
+      snapshot?.callout ??
+      snapshot?.callOut ??
+      snapshot?.pricing?.calloutFee ??
+      snapshot?.pricing?.calloutCharge ??
+      snapshot?.pricing?.callOutFee ??
+      snapshot?.pricing?.callOutCharge ??
+      snapshot?.pricing?.callout ??
+      snapshot?.pricing?.callOut ??
       0
     ) || 0
   );
@@ -1509,17 +1535,6 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
   const stairsFee = Math.max(
     0,
     Number(
-      snapshot?.stairsFee ??
-      snapshot?.stairsCharge ??
-      snapshot?.stairsCost ??
-      snapshot?.stairFee ??
-      snapshot?.stairCharge ??
-      snapshot?.stairs_fee ??
-      snapshot?.stairs_charge ??
-      snapshot?.pricing?.stairsFee ??
-      snapshot?.pricing?.stairsCharge ??
-      snapshot?.pricing?.stairFee ??
-      snapshot?.pricing?.stairCharge ??
       jobPricing?.stairsFee ??
       jobPricing?.stairsCharge ??
       jobPricing?.stairsCost ??
@@ -1546,6 +1561,17 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
       job?.raw?.billing?.stairsCharge ??
       job?.raw?.billing?.stairFee ??
       job?.raw?.billing?.stairCharge ??
+      snapshot?.stairsFee ??
+      snapshot?.stairsCharge ??
+      snapshot?.stairsCost ??
+      snapshot?.stairFee ??
+      snapshot?.stairCharge ??
+      snapshot?.stairs_fee ??
+      snapshot?.stairs_charge ??
+      snapshot?.pricing?.stairsFee ??
+      snapshot?.pricing?.stairsCharge ??
+      snapshot?.pricing?.stairFee ??
+      snapshot?.pricing?.stairCharge ??
       0
     ) || 0
   );
@@ -1553,14 +1579,6 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
   const travelBackFee = Math.max(
     0,
     Number(
-      snapshot?.travelBackFee ??
-      snapshot?.travelBackCharge ??
-      snapshot?.travelBack ??
-      snapshot?.travelFee ??
-      snapshot?.travel_back_fee ??
-      snapshot?.travel_back_charge ??
-      snapshot?.pricing?.travelBackFee ??
-      snapshot?.pricing?.travelBackCharge ??
       jobPricing?.travelBackCharge ??
       jobPricing?.travelBackFee ??
       jobPricing?.travelBack ??
@@ -1580,6 +1598,14 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
       job?.raw?.travelBack ??
       job?.raw?.billing?.travelBackCharge ??
       job?.raw?.billing?.travelBackFee ??
+      snapshot?.travelBackFee ??
+      snapshot?.travelBackCharge ??
+      snapshot?.travelBack ??
+      snapshot?.travelFee ??
+      snapshot?.travel_back_fee ??
+      snapshot?.travel_back_charge ??
+      snapshot?.pricing?.travelBackFee ??
+      snapshot?.pricing?.travelBackCharge ??
       0
     ) || 0
   );
@@ -1587,8 +1613,6 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
   const extraCharges = Math.max(
     0,
     Number(
-      snapshot?.extraCharges ??
-      snapshot?.pricing?.extraCharges ??
       jobPricing?.extraCharges ??
       jobPricing?.extraTimeCharge ??
       billing?.extraCharges ??
@@ -1596,16 +1620,16 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
       job?.raw?.pricing?.extraCharges ??
       job?.raw?.extraCharges ??
       job?.raw?.billing?.extraCharges ??
+      snapshot?.extraCharges ??
+      snapshot?.pricing?.extraCharges ??
       0
     ) || 0
   );
 
   // 5. Initial / Estimated Total (before overtime)
+  const lineItemsSum = baseAmount + calloutFee + stairsFee + travelBackFee + extraCharges;
+
   const explicitEstimatedTotal = Number(
-    snapshot?.initialTotal ??
-    snapshot?.minimumEstimatedCost ??
-    snapshot?.estimatedTotal ??
-    snapshot?.estimatedCost ??
     jobPricing?.initialTotal ??
     jobPricing?.minimumEstimatedCost ??
     jobPricing?.estimatedTotal ??
@@ -1620,94 +1644,265 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
     job?.raw?.pricing?.estimatedCost ??
     job?.raw?.minimumEstimatedCost ??
     job?.raw?.estimatedTotal ??
+    snapshot?.initialTotal ??
+    snapshot?.minimumEstimatedCost ??
+    snapshot?.estimatedTotal ??
+    snapshot?.estimatedCost ??
     (priceType === "percentage" || priceType === "custom"
       ? 0
       : (billing?.estimatedTotal ?? billing?.totalAmount ?? job?.raw?.billing?.estimatedTotal ?? job?.raw?.billing?.totalAmount ?? job?.raw?.totalAmount ?? job?.totalAmount ?? 0))
   );
 
   const calculatedInitialTotal = isHourly
-    ? (baseAmount + calloutFee + stairsFee + travelBackFee + extraCharges)
+    ? lineItemsSum
     : (resolveDriverPriceAmount(assignment, job, priceType) || baseAmount);
 
-  const initialTotal = explicitEstimatedTotal > 0 ? explicitEstimatedTotal : calculatedInitialTotal;
+  // For hourly jobs, if line items were updated or explicit is missing/stale, prefer the exact computed sum
+  const initialTotal = isHourly
+    ? (lineItemsSum > 0 ? lineItemsSum : (explicitEstimatedTotal > 0 ? explicitEstimatedTotal : calculatedInitialTotal))
+    : (explicitEstimatedTotal > 0 ? explicitEstimatedTotal : calculatedInitialTotal);
 
   // 6. Worked Duration
-  let totalWorkedMinutes = 0;
-  if (
-    assignment?.totalWorkedMinutes !== null &&
-    assignment?.totalWorkedMinutes !== undefined &&
-    !Number.isNaN(Number(assignment.totalWorkedMinutes)) &&
-    Number(assignment.totalWorkedMinutes) >= 0
-  ) {
-    totalWorkedMinutes = Math.floor(Number(assignment.totalWorkedMinutes));
-  } else if (job?.totalWorkedMinutes !== null && job?.totalWorkedMinutes !== undefined && Number(job?.totalWorkedMinutes) >= 0) {
-    totalWorkedMinutes = Math.floor(Number(job.totalWorkedMinutes));
-  } else if (assignment?.startedAt && assignment?.completedAt) {
-    const startMs = new Date(assignment.startedAt).getTime();
-    const endMs = new Date(assignment.completedAt).getTime();
-    if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs) {
-      totalWorkedMinutes = Math.floor((endMs - startMs) / (1000 * 60));
+  // Use myAssignment.startedAt and myAssignment.completedAt if available.
+  // If job is still active: use current time only for preview.
+  // Do NOT use scheduled time.
+  let actualWorkedMinutes = 0;
+
+  const resolvedStartedAt =
+    assignment?.startedAt ||
+    assignment?.jobStartedAt ||
+    assignment?.actualStartTime ||
+    assignment?.workStartedAt ||
+    job?.driverStartedAt ||
+    job?.startedAt ||
+    job?.jobStartedAt ||
+    job?.actualStartTime ||
+    job?.raw?.driverStartedAt ||
+    job?.raw?.startedAt ||
+    null;
+
+  const resolvedCompletedAt =
+    assignment?.completedAt ||
+    assignment?.endedAt ||
+    assignment?.actualEndTime ||
+    assignment?.workEndedAt ||
+    job?.driverCompletedAt ||
+    job?.completedAt ||
+    job?.endedAt ||
+    job?.actualEndTime ||
+    job?.raw?.driverCompletedAt ||
+    job?.raw?.completedAt ||
+    null;
+
+  const isCompleted = Boolean(
+    assignment?.isCompleted ||
+    job?.status === "completed" ||
+    assignment?.status === "completed" ||
+    resolvedCompletedAt
+  );
+
+  if (isCompleted) {
+    if (
+      assignment?.totalWorkedMinutes !== null &&
+      assignment?.totalWorkedMinutes !== undefined &&
+      !Number.isNaN(Number(assignment.totalWorkedMinutes)) &&
+      Number(assignment.totalWorkedMinutes) > 0
+    ) {
+      actualWorkedMinutes = Math.floor(Number(assignment.totalWorkedMinutes));
+    } else if (
+      assignment?.workedMinutes !== null &&
+      assignment?.workedMinutes !== undefined &&
+      !Number.isNaN(Number(assignment.workedMinutes)) &&
+      Number(assignment.workedMinutes) > 0
+    ) {
+      actualWorkedMinutes = Math.floor(Number(assignment.workedMinutes));
+    } else if (
+      assignment?.actualDurationMinutes !== null &&
+      assignment?.actualDurationMinutes !== undefined &&
+      !Number.isNaN(Number(assignment.actualDurationMinutes)) &&
+      Number(assignment.actualDurationMinutes) > 0
+    ) {
+      actualWorkedMinutes = Math.floor(Number(assignment.actualDurationMinutes));
+    } else if (
+      job?.totalWorkedMinutes !== null &&
+      job?.totalWorkedMinutes !== undefined &&
+      !Number.isNaN(Number(job.totalWorkedMinutes)) &&
+      Number(job?.totalWorkedMinutes) > 0
+    ) {
+      actualWorkedMinutes = Math.floor(Number(job.totalWorkedMinutes));
+    } else if (
+      job?.actualDurationMinutes !== null &&
+      job?.actualDurationMinutes !== undefined &&
+      !Number.isNaN(Number(job.actualDurationMinutes)) &&
+      Number(job?.actualDurationMinutes) > 0
+    ) {
+      actualWorkedMinutes = Math.floor(Number(job.actualDurationMinutes));
+    } else if (
+      snapshot?.actualWorkedMinutes !== null &&
+      snapshot?.actualWorkedMinutes !== undefined &&
+      !Number.isNaN(Number(snapshot.actualWorkedMinutes)) &&
+      Number(snapshot.actualWorkedMinutes) > 0
+    ) {
+      actualWorkedMinutes = Math.floor(Number(snapshot.actualWorkedMinutes));
+    } else if (resolvedStartedAt && resolvedCompletedAt) {
+      const startMs = new Date(resolvedStartedAt).getTime();
+      const endMs = new Date(resolvedCompletedAt).getTime();
+      if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs) {
+        actualWorkedMinutes = Math.floor((endMs - startMs) / (1000 * 60));
+      }
     }
-  } else if (assignment?.startedAt) {
-    const startMs = new Date(assignment.startedAt).getTime();
-    if (Number.isFinite(startMs)) {
-      totalWorkedMinutes = Math.max(0, Math.floor((Date.now() - startMs) / (1000 * 60)));
+  } else {
+    // Active session / preview mode:
+    // Calculate CURRENT worked duration from myAssignment.startedAt -> current time (Date.now())
+    if (resolvedStartedAt) {
+      const startMs = new Date(resolvedStartedAt).getTime();
+      if (Number.isFinite(startMs)) {
+        actualWorkedMinutes = Math.max(0, Math.floor((Date.now() - startMs) / (1000 * 60)));
+      }
+    }
+
+    // Fallback if startedAt not set or resulted in 0
+    if (actualWorkedMinutes === 0) {
+      if (
+        assignment?.totalWorkedMinutes !== null &&
+        assignment?.totalWorkedMinutes !== undefined &&
+        !Number.isNaN(Number(assignment.totalWorkedMinutes)) &&
+        Number(assignment.totalWorkedMinutes) > 0
+      ) {
+        actualWorkedMinutes = Math.floor(Number(assignment.totalWorkedMinutes));
+      } else if (
+        job?.totalWorkedMinutes !== null &&
+        job?.totalWorkedMinutes !== undefined &&
+        !Number.isNaN(Number(job.totalWorkedMinutes)) &&
+        Number(job?.totalWorkedMinutes) > 0
+      ) {
+        actualWorkedMinutes = Math.floor(Number(job.totalWorkedMinutes));
+      } else if (
+        snapshot?.actualWorkedMinutes !== null &&
+        snapshot?.actualWorkedMinutes !== undefined &&
+        !Number.isNaN(Number(snapshot.actualWorkedMinutes)) &&
+        Number(snapshot.actualWorkedMinutes) > 0
+      ) {
+        actualWorkedMinutes = Math.floor(Number(snapshot.actualWorkedMinutes));
+      }
     }
   }
 
-  // 7. Overtime Calculation (for hourly jobs with 30-min slabs)
+  const totalWorkedMinutes = actualWorkedMinutes;
+  const minimumDurationMinutes = baseMinutes;
+
+  // 7. Overtime Calculation (for hourly jobs with 15–31 and 32–60 min slab rules)
+  // Rule:
+  // - Extra minutes 0–14 min: $0 (0 blocks)
+  // - Extra minutes 15–31 min: 50% of Hourly Rate (hourlyRate / 2, 1 block)
+  // - Extra minutes 32–60 min: 100% of Hourly Rate (hourlyRate, 2 blocks)
+  // Then repeat for each additional full hour.
+  let extraMinutes = 0;
   let overtimeMinutes = 0;
   let overtimeBlocks = 0;
   let overtimeAmount = 0;
 
   if (isHourly && hourlyRate > 0) {
-    const hasBackendOvertimeMinutes =
-      snapshot?.overtimeMinutes !== undefined &&
-      snapshot?.overtimeMinutes !== null &&
-      !Number.isNaN(Number(snapshot.overtimeMinutes));
-    overtimeMinutes = hasBackendOvertimeMinutes
-      ? Math.max(0, Number(snapshot.overtimeMinutes))
-      : Math.max(0, totalWorkedMinutes - baseMinutes);
+    const hasBackendExtraMinutes =
+      (snapshot?.extraMinutes !== undefined && snapshot?.extraMinutes !== null && !Number.isNaN(Number(snapshot.extraMinutes))) ||
+      (snapshot?.overtimeMinutes !== undefined && snapshot?.overtimeMinutes !== null && !Number.isNaN(Number(snapshot.overtimeMinutes)));
+
+    const backendExtraMinutes =
+      snapshot?.extraMinutes !== undefined && snapshot?.extraMinutes !== null && !Number.isNaN(Number(snapshot.extraMinutes))
+        ? Number(snapshot.extraMinutes)
+        : snapshot?.overtimeMinutes !== undefined && snapshot?.overtimeMinutes !== null && !Number.isNaN(Number(snapshot.overtimeMinutes))
+        ? Number(snapshot.overtimeMinutes)
+        : null;
+
+    if (isCompleted && hasBackendExtraMinutes && backendExtraMinutes !== null) {
+      extraMinutes = Math.max(0, backendExtraMinutes);
+    } else {
+      extraMinutes = Math.max(0, actualWorkedMinutes - minimumDurationMinutes);
+    }
+    overtimeMinutes = extraMinutes;
+
+    // Client calculation based on latest approved overtime rule (15-31m half, 32-60m full)
+    let clientOvertimeBlocks = 0;
+    let clientOvertimeAmount = 0;
+    if (extraMinutes > 0) {
+      const fullExtraHours = Math.floor(extraMinutes / 60);
+      const remainingMinutes = extraMinutes % 60;
+      let additionalHours = 0;
+      if (remainingMinutes >= 32) {
+        additionalHours = 1.0;
+      } else if (remainingMinutes >= 15) {
+        additionalHours = 0.5;
+      } else {
+        additionalHours = 0.0;
+      }
+      const billableHours = fullExtraHours + additionalHours;
+      clientOvertimeBlocks = Math.round(billableHours * 2);
+      clientOvertimeAmount = billableHours * hourlyRate;
+    } else {
+      clientOvertimeBlocks = 0;
+      clientOvertimeAmount = 0;
+    }
 
     const hasBackendOvertimeBlocks =
       snapshot?.overtimeBlocks !== undefined &&
       snapshot?.overtimeBlocks !== null &&
       !Number.isNaN(Number(snapshot.overtimeBlocks));
-    overtimeBlocks = hasBackendOvertimeBlocks
-      ? Math.max(0, Number(snapshot.overtimeBlocks))
-      : overtimeMinutes > 0
-        ? Math.ceil(overtimeMinutes / 30)
-        : 0;
 
-    const halfHourlyRate = hourlyRate / 2;
     const hasBackendOvertimeAmount =
       snapshot?.overtimeAmount !== undefined &&
       snapshot?.overtimeAmount !== null &&
       !Number.isNaN(Number(snapshot.overtimeAmount));
-    overtimeAmount = hasBackendOvertimeAmount
-      ? Number(snapshot.overtimeAmount)
-      : overtimeBlocks * halfHourlyRate;
+
+    if (isCompleted && hasBackendOvertimeAmount) {
+      const backendAmount = Number(snapshot.overtimeAmount);
+      if (backendAmount !== clientOvertimeAmount) {
+        console.warn(
+          `[PRICING MISMATCH] Backend overtimeAmount ($${backendAmount.toFixed(2)}) differs from app rule ($${clientOvertimeAmount.toFixed(2)}) for extraMinutes=${extraMinutes} (remaining: ${extraMinutes % 60}m). Preferring backend authoritative value.`
+        );
+      }
+      overtimeAmount = backendAmount;
+      if (hasBackendOvertimeBlocks) {
+        overtimeBlocks = Math.max(0, Number(snapshot.overtimeBlocks));
+      } else {
+        const halfRate = hourlyRate / 2;
+        overtimeBlocks = halfRate > 0 ? Math.round(overtimeAmount / halfRate) : 0;
+      }
+    } else {
+      overtimeBlocks = clientOvertimeBlocks;
+      overtimeAmount = clientOvertimeAmount;
+    }
   }
 
   // 8. Final Total / Amount To Collect
+  // Priority: backend finalAmount -> backend pricingSnapshot.finalAmount -> app projectedFinalAmount
   const backendFinalAmount = Number(
-    snapshot?.finalDriverAmount ??
+    job?.finalAmount ??
+    job?.pricing?.finalAmount ??
+    job?.pricingSnapshot?.finalAmount ??
     snapshot?.finalAmount ??
+    snapshot?.finalDriverAmount ??
     snapshot?.finalTotal ??
     snapshot?.finalCost ??
     jobPricing?.finalCost ??
     jobPricing?.finalAmount ??
     jobPricing?.finalDriverAmount ??
-    billing?.totalAmount ??
+    job?.finalCost ??
     0
   );
 
+  const projectedFinalAmount = initialTotal + overtimeAmount;
+
   let finalTotal = initialTotal;
   if (isHourly) {
-    if (backendFinalAmount > 0 && backendFinalAmount >= initialTotal + overtimeAmount) {
+    if (isCompleted && backendFinalAmount > 0) {
+      if (backendFinalAmount !== projectedFinalAmount) {
+        console.warn(
+          `[PRICING MISMATCH] Backend finalAmount ($${backendFinalAmount.toFixed(2)}) differs from app projectedFinalAmount ($${projectedFinalAmount.toFixed(2)}). Preferring backend authoritative value.`
+        );
+      }
       finalTotal = backendFinalAmount;
     } else {
-      finalTotal = initialTotal + overtimeAmount;
+      finalTotal = projectedFinalAmount;
     }
   } else {
     finalTotal = backendFinalAmount > 0 ? backendFinalAmount : initialTotal;
@@ -1734,9 +1929,11 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
     formattedHourlyRate: hourlyRate > 0 ? `$${hourlyRate.toFixed(2)}/hr` : null,
 
     baseHours,
+    minimumDurationMinutes,
     formattedBaseDuration: formatBaseHoursLabel(baseHours),
 
     baseAmount,
+    minimumCost: baseAmount,
     formattedBaseAmount: `$${baseAmount.toFixed(2)}`,
 
     calloutFee,
@@ -1756,16 +1953,23 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
     formattedInitialTotal: `$${initialTotal.toFixed(2)}`,
     formattedEstimatedTotal: `$${initialTotal.toFixed(2)}`,
 
-    workedMinutes: totalWorkedMinutes,
-    totalWorkedMinutes,
-    formattedWorkedTime: formatDuration(totalWorkedMinutes, false),
+    workedMinutes: actualWorkedMinutes,
+    totalWorkedMinutes: actualWorkedMinutes,
+    actualWorkedMinutes,
+    formattedWorkedMinutes: `${actualWorkedMinutes} Min`,
+    formattedWorkedTime: `${actualWorkedMinutes} Min`,
+    formattedActualDuration: `${actualWorkedMinutes} Min`,
 
-    overtimeMinutes,
-    formattedOvertimeMinutes: `${overtimeMinutes} Min`,
+    extraMinutes,
+    overtimeMinutes: extraMinutes,
+    formattedOvertimeMinutes: `${extraMinutes} Min`,
+    formattedExtraMinutes: `${extraMinutes} Min`,
+    formattedExtraTime: `${extraMinutes} Min`,
     overtimeBlocks,
     overtimeAmount,
     formattedOvertimeAmount: `$${overtimeAmount.toFixed(2)}`,
 
+    projectedFinalAmount,
     finalAmount: finalTotal,
     finalTotal,
     amountToCollect: finalTotal,
@@ -1777,22 +1981,16 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
     displayFinalPrice: `$${finalTotal.toFixed(2)}`,
   };
 
-  if (__DEV__) {
-    console.log("[PRICING DEBUG]", {
-      screen: screenName || "jobHelpers",
-      jobNumber: job?.jobNumber || job?.jobReference || job?.referenceNumber || job?._id,
-      hourlyRate: summary.hourlyRate,
-      baseAmount: summary.baseAmount,
-      calloutFee: summary.calloutFee,
-      stairsFee: summary.stairsFee,
-      travelBackFee: summary.travelBackFee,
-      initialTotal: summary.initialTotal,
-      workedMinutes: summary.workedMinutes,
-      overtimeMinutes: summary.overtimeMinutes,
-      overtimeAmount: summary.overtimeAmount,
-      finalAmount: summary.finalAmount,
-    });
-  }
+  console.log("[PRICING DEBUG]", {
+    estimatedTotal: summary.estimatedTotal,
+    minimumDurationMinutes: summary.minimumDurationMinutes,
+    actualWorkedMinutes: summary.actualWorkedMinutes,
+    extraMinutes: summary.extraMinutes,
+    hourlyRate: summary.hourlyRate,
+    overtimeAmount: summary.overtimeAmount,
+    finalAmount: summary.finalAmount,
+    amountToCollect: summary.amountToCollect,
+  });
 
   return summary;
 };
@@ -1810,15 +2008,18 @@ export const calculateDriverHourlyEarnings = (myAssignment = {}, job = {}) => {
     canShowPrice: summary.canShowPrice,
 
     totalWorkedMinutes: summary.totalWorkedMinutes,
+    actualWorkedMinutes: summary.actualWorkedMinutes,
     formattedWorkedTime: summary.formattedWorkedTime,
 
     hourlyRate: summary.hourlyRate,
     formattedHourlyRate: summary.formattedHourlyRate,
 
     baseHours: summary.baseHours,
+    minimumDurationMinutes: summary.minimumDurationMinutes,
     formattedBaseDuration: summary.formattedBaseDuration,
 
     baseAmount: summary.baseAmount,
+    minimumCost: summary.baseAmount,
     formattedBaseAmount: summary.formattedBaseAmount,
 
     calloutFee: summary.calloutFee,
@@ -1838,18 +2039,25 @@ export const calculateDriverHourlyEarnings = (myAssignment = {}, job = {}) => {
     formattedInitialTotal: summary.formattedInitialTotal,
     formattedEstimatedTotal: summary.formattedEstimatedTotal,
 
+    extraMinutes: summary.extraMinutes,
     overtimeMinutes: summary.overtimeMinutes,
     formattedOvertimeMinutes: summary.formattedOvertimeMinutes,
     overtimeBlocks: summary.overtimeBlocks,
     overtimeAmount: summary.overtimeAmount,
     formattedOvertimeAmount: summary.formattedOvertimeAmount,
 
+    projectedFinalAmount: summary.projectedFinalAmount,
+    finalAmount: summary.finalAmount,
     finalDriverAmount: summary.finalTotal,
     formattedFinalAmount: summary.formattedFinalTotal,
+    formattedFinalTotal: summary.formattedFinalTotal,
+    amountToCollect: summary.amountToCollect,
+    formattedAmountToCollect: summary.formattedAmountToCollect,
 
     summary,
   };
 };
+
 
 /**
  * Determines driver price visibility and formats visible price.

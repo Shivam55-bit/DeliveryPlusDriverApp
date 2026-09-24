@@ -9,6 +9,8 @@ import {
   StatusBar,
   Linking,
   Image,
+  AppState,
+  RefreshControl,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
@@ -35,11 +37,17 @@ export default function JobDetailScreen({ route, navigation }) {
   const [currentUser, setCurrentUser] = useState(null);
   const [job, setJob] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const scrollViewRef = useRef(null);
 
   const routeParams = route?.params;
   const rawParam = useMemo(() => routeParams?.job || null, [routeParams]);
-  const jobId = rawParam?._id || rawParam?.backendId || rawParam?.id || routeParams?.id;
+  const jobId =
+    routeParams?.jobId ||
+    routeParams?.id ||
+    rawParam?._id ||
+    rawParam?.backendId ||
+    rawParam?.id;
 
   const jobState = getJobState(job) || {};
   const myAssignment = useMemo(() => {
@@ -66,7 +74,7 @@ export default function JobDetailScreen({ route, navigation }) {
   );
   const elapsedTimeSeconds = useElapsedTime(myAssignment?.startedAt, isMyWorkInProgress);
 
-  const fetchJobDetails = useCallback(async () => {
+  const fetchJobDetails = useCallback(async (isManualRefresh = false) => {
     let user = currentUser;
     if (!user) {
       user = await getStoredUser();
@@ -78,13 +86,29 @@ export default function JobDetailScreen({ route, navigation }) {
         setJob(normalizeJob(rawParam, user));
       }
       setLoading(false);
+      setRefreshing(false);
       return;
     }
+
+    if (isManualRefresh) setRefreshing(true);
 
     try {
       const response = await API.get(`/jobs/${jobId}`);
       const rawData = response.job || response.data?.job || response;
-      setJob(normalizeJob(rawData, user));
+      if (rawData) {
+        const normalized = normalizeJob(rawData, user);
+        setJob((prevJob) => {
+          // Preserve ongoing work session timer & agreement state so timer does not reset
+          if (prevJob?.myAssignment?.startedAt && !normalized?.myAssignment?.startedAt) {
+            normalized.myAssignment.startedAt = prevJob.myAssignment.startedAt;
+            normalized.myAssignment.isInProgress = true;
+          }
+          if (prevJob?.startedAt && !normalized?.startedAt) {
+            normalized.startedAt = prevJob.startedAt;
+          }
+          return normalized;
+        });
+      }
     } catch (error) {
       if (error.response?.status === 401) {
         clearAuthToken();
@@ -94,19 +118,15 @@ export default function JobDetailScreen({ route, navigation }) {
         return;
       }
 
-      console.warn("API load error, falling back to params:", error.message);
-      if (rawParam) {
+      console.warn("[JobDetail] API load error, falling back to params:", error.message);
+      if (rawParam && !job) {
         setJob(normalizeJob(rawParam, user));
-      } else {
-        Alert.alert(
-          "Error",
-          "Unable to load job details: " + (error.response?.data?.message || error.message)
-        );
       }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  }, [jobId, rawParam, currentUser, navigation]);
+  }, [jobId, rawParam, currentUser, navigation, job]);
 
   useEffect(() => {
     fetchJobDetails();
@@ -117,6 +137,45 @@ export default function JobDetailScreen({ route, navigation }) {
       fetchJobDetails();
     }, [fetchJobDetails])
   );
+
+  // Auto-refresh while job is running / in-progress (every 20 seconds)
+  useEffect(() => {
+    let interval = null;
+    const isRunning = Boolean(
+      jobState?.isInProgress ||
+      myAssignment?.isInProgress ||
+      job?.status === "in_progress" ||
+      job?.status === "started"
+    );
+
+    if (isRunning && jobId) {
+      interval = setInterval(() => {
+        fetchJobDetails();
+      }, 20000);
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [jobState?.isInProgress, myAssignment?.isInProgress, job?.status, jobId, fetchJobDetails]);
+
+  // AppState change handling: Refresh immediately when app returns from background
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextAppState) => {
+      if (nextAppState === "active") {
+        console.log("[JobDetail] App returned to active. Refreshing latest job pricing & status...");
+        fetchJobDetails();
+      }
+    });
+
+    return () => {
+      subscription?.remove();
+    };
+  }, [fetchJobDetails]);
+
+  const onPullRefresh = useCallback(() => {
+    fetchJobDetails(true);
+  }, [fetchJobDetails]);
 
   const handleStartJob = () => {
     if (!jobId) {
@@ -301,6 +360,14 @@ export default function JobDetailScreen({ route, navigation }) {
           { paddingBottom: 132 + insets.bottom },
         ]}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onPullRefresh}
+            colors={["#0284C7"]}
+            tintColor="#0284C7"
+          />
+        }
       >
         {/* ── Completed Driver WORK SUMMARY Card ── */}
         {myAssignment.isCompleted ? (
@@ -715,7 +782,7 @@ export default function JobDetailScreen({ route, navigation }) {
                       {driverEarnings.formattedEstimatedTotal || driverEarnings.formattedInitialTotal}
                     </Text>
                     <Text style={styles.pricingNotice}>
-                      * Final amount with 30-min overtime slabs will be calculated upon ending work session.
+                      * Final amount with overtime slabs will be calculated upon ending work session.
                     </Text>
                   </View>
                 </>

@@ -10,6 +10,8 @@ import {
   StatusBar,
   ScrollView,
   useWindowDimensions,
+  AppState,
+  RefreshControl,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import EmptyState from "../components/EmptyState";
@@ -164,8 +166,10 @@ export default function JobsScreen({ navigation }) {
   const [search, setSearch] = useState("");
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const fetchJobs = useCallback(async () => {
+  const fetchJobs = useCallback(async (isManualRefresh = false) => {
+    if (isManualRefresh) setRefreshing(true);
     try {
       const user = await getStoredUser();
       const response = await API.get("/jobs/driver/my-jobs").catch(async () => {
@@ -186,6 +190,7 @@ export default function JobsScreen({ navigation }) {
       console.log("Failed to load jobs: ", error?.response?.data?.message || error?.message);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
@@ -194,6 +199,39 @@ export default function JobsScreen({ navigation }) {
       fetchJobs();
     }, [fetchJobs])
   );
+
+  // AppState change handling: Refresh when app resumes from background
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextAppState) => {
+      if (nextAppState === "active") {
+        console.log("[JobsScreen] App returned to active. Refreshing jobs list...");
+        fetchJobs();
+      }
+    });
+
+    return () => {
+      subscription?.remove();
+    };
+  }, [fetchJobs]);
+
+  // Periodic polling when any job is active (every 25 seconds)
+  useEffect(() => {
+    let interval = null;
+    const hasActiveJob = jobs.some((j) => ["started", "inTransit", "arrived"].includes(j.status));
+    if (hasActiveJob) {
+      interval = setInterval(() => {
+        fetchJobs();
+      }, 25000);
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [jobs, fetchJobs]);
+
+  const onPullRefresh = useCallback(() => {
+    fetchJobs(true);
+  }, [fetchJobs]);
 
   const filteredJobs = useMemo(() => {
     return jobs.filter((job) => {
@@ -231,7 +269,12 @@ export default function JobsScreen({ navigation }) {
             ? "Continue"
             : "View Details";
 
-    const handleNavigate = () => navigation.navigate("JobDetail", { job: item });
+    const handleNavigate = () =>
+      navigation.navigate("JobDetail", {
+        jobId: item.backendId || item.id,
+        id: item.backendId || item.id,
+        job: item,
+      });
     const pickupSubtitle = getAddressSubtitle(item.pickup);
     const dropSubtitle = getAddressSubtitle(item.drop);
     const isCompleted = item.status === "completed";
@@ -416,6 +459,14 @@ export default function JobsScreen({ navigation }) {
             keyExtractor={(item) => item.id}
             renderItem={renderJob}
             showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onPullRefresh}
+                colors={[C.blue]}
+                tintColor={C.blue}
+              />
+            }
             contentContainerStyle={[
               styles.listContent,
               { paddingBottom: 140 + insets.bottom },
