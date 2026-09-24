@@ -10,6 +10,7 @@ import {
   StatusBar,
   ActivityIndicator,
   Platform,
+  Keyboard,
 } from "react-native";
 import { WebView } from "react-native-webview";
 import LinearGradient from "react-native-linear-gradient";
@@ -48,23 +49,25 @@ export default function SignatureScreen({ navigation, route }) {
   const signatureHtml = `<!DOCTYPE html>
 <html>
 <head>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no" />
 <style>
   * {
-    -webkit-touch-callout: none;
-    -webkit-user-select: none;
-    user-select: none;
+    -webkit-touch-callout: none !important;
+    -webkit-user-select: none !important;
+    user-select: none !important;
     box-sizing: border-box;
+    touch-action: none !important;
   }
   html, body {
     margin: 0;
     padding: 0;
-    width: 100%;
-    height: 100%;
-    overflow: hidden;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden !important;
     background: #FFFFFF;
     touch-action: none !important;
     overscroll-behavior: none !important;
+    -webkit-overflow-scrolling: auto;
     position: fixed;
     top: 0;
     left: 0;
@@ -77,7 +80,7 @@ export default function SignatureScreen({ navigation, route }) {
     left: 0;
     width: 100%;
     height: 100%;
-    overflow: hidden;
+    overflow: hidden !important;
     touch-action: none !important;
     background: #FFFFFF;
   }
@@ -103,6 +106,13 @@ export default function SignatureScreen({ navigation, route }) {
       var drawing = false;
       var hasStroke = false;
       var ratio = window.devicePixelRatio || 1;
+
+      // Prevent any outer screen pull-to-refresh or rubberband drag
+      ['touchstart', 'touchmove', 'touchend', 'gesturestart'].forEach(function(evtName) {
+        window.addEventListener(evtName, function(e) { e.preventDefault(); }, { passive: false });
+        document.addEventListener(evtName, function(e) { e.preventDefault(); }, { passive: false });
+        document.body.addEventListener(evtName, function(e) { e.preventDefault(); }, { passive: false });
+      });
 
       function resizeCanvas() {
         var rect = wrapper.getBoundingClientRect();
@@ -158,60 +168,62 @@ export default function SignatureScreen({ navigation, route }) {
         drawing = false;
       }
 
-      // Pointer events
-      canvas.addEventListener('pointerdown', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        try { canvas.setPointerCapture(e.pointerId); } catch(err){}
-        startDraw(e);
-      }, { passive: false });
+      var supportsPointer = !!window.PointerEvent;
 
-      canvas.addEventListener('pointermove', function(e) {
-        if (drawing) {
+      if (supportsPointer) {
+        canvas.addEventListener('pointerdown', function(e) {
           e.preventDefault();
           e.stopPropagation();
-          moveDraw(e);
-        }
-      }, { passive: false });
+          try { canvas.setPointerCapture(e.pointerId); } catch(err){}
+          startDraw(e);
+        }, { passive: false });
 
-      canvas.addEventListener('pointerup', function(e) {
-        if (drawing) {
+        canvas.addEventListener('pointermove', function(e) {
+          if (drawing) {
+            e.preventDefault();
+            e.stopPropagation();
+            moveDraw(e);
+          }
+        }, { passive: false });
+
+        canvas.addEventListener('pointerup', function(e) {
+          if (drawing) {
+            e.preventDefault();
+            e.stopPropagation();
+            stopDraw(e);
+          }
+        }, { passive: false });
+
+        canvas.addEventListener('pointercancel', function(e) {
+          if (drawing) {
+            e.preventDefault();
+            e.stopPropagation();
+            stopDraw(e);
+          }
+        }, { passive: false });
+      } else {
+        canvas.addEventListener('touchstart', function(e) {
           e.preventDefault();
           e.stopPropagation();
-          stopDraw(e);
-        }
-      }, { passive: false });
+          startDraw(e);
+        }, { passive: false });
 
-      canvas.addEventListener('pointercancel', function(e) {
-        if (drawing) {
-          e.preventDefault();
-          e.stopPropagation();
-          stopDraw(e);
-        }
-      }, { passive: false });
+        canvas.addEventListener('touchmove', function(e) {
+          if (drawing) {
+            e.preventDefault();
+            e.stopPropagation();
+            moveDraw(e);
+          }
+        }, { passive: false });
 
-      // Fallback touch events with preventDefault on window to stop screen scroll
-      window.addEventListener('touchmove', function(e) {
-        if (drawing) e.preventDefault();
-      }, { passive: false });
-
-      canvas.addEventListener('touchstart', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        startDraw(e);
-      }, { passive: false });
-
-      canvas.addEventListener('touchmove', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        moveDraw(e);
-      }, { passive: false });
-
-      canvas.addEventListener('touchend', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        stopDraw(e);
-      }, { passive: false });
+        canvas.addEventListener('touchend', function(e) {
+          if (drawing) {
+            e.preventDefault();
+            e.stopPropagation();
+            stopDraw(e);
+          }
+        }, { passive: false });
+      }
 
       window.addEventListener('resize', resizeCanvas);
       window.addEventListener('load', resizeCanvas);
@@ -404,7 +416,10 @@ export default function SignatureScreen({ navigation, route }) {
         </View>
 
         {/* Large Signature Drawing Canvas Box */}
-        <View style={styles.signatureCard}>
+        <View
+          style={styles.signatureCard}
+          onTouchStart={() => Keyboard.dismiss()}
+        >
           <View style={styles.signatureGuide} pointerEvents="none" />
           <WebView
             ref={webviewRef}
@@ -414,6 +429,7 @@ export default function SignatureScreen({ navigation, route }) {
             onMessage={handleCanvasMessage}
             scrollEnabled={false}
             bounces={false}
+            overScrollMode="never"
             javaScriptEnabled
             domStorageEnabled
             allowFileAccess
@@ -422,6 +438,7 @@ export default function SignatureScreen({ navigation, route }) {
             mixedContentMode="never"
             showsHorizontalScrollIndicator={false}
             showsVerticalScrollIndicator={false}
+            onTouchStart={() => Keyboard.dismiss()}
           />
         </View>
 

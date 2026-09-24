@@ -79,19 +79,32 @@ export default function AppNavigator() {
           <Stack.Screen
             name="StartJobAgreement"
             component={StartJobAgreementScreen}
-            options={{ headerShown: false }}
+            options={{
+              headerShown: false,
+              presentation: "fullScreenModal",
+              gestureEnabled: false,
+            }}
           />
 
           <Stack.Screen
             name="JobCompletionTerms"
             component={JobCompletionTermsScreen}
-            options={{ headerShown: false }}
+            options={{
+              headerShown: false,
+              presentation: "fullScreenModal",
+              gestureEnabled: false,
+            }}
           />
 
           <Stack.Screen
             name="Signature"
             component={SignatureScreen}
-            options={{ headerShown: false }}
+            options={{
+              headerShown: false,
+              presentation: "fullScreenModal",
+              gestureEnabled: false,
+              animation: "slide_from_bottom",
+            }}
           />
 
           <Stack.Screen
@@ -103,7 +116,11 @@ export default function AppNavigator() {
           <Stack.Screen
             name="CompleteJob"
             component={CompleteJobScreen}
-            options={{ headerShown: false }}
+            options={{
+              headerShown: false,
+              presentation: "fullScreenModal",
+              gestureEnabled: false,
+            }}
           />
 
           <Stack.Screen
