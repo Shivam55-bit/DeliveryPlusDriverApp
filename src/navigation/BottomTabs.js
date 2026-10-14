@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React from "react";
 import {
   View,
   Text,
@@ -9,12 +9,17 @@ import {
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AppIcon from "../components/common/AppIcon";
-import API from "../services/api";
 
 import HomeScreen from "../screens/HomeScreen";
 import JobsScreen from "../screens/JobsScreen";
 import ProfileScreen from "../screens/ProfileScreen";
 import NotificationsScreen from "../screens/NotificationsScreen";
+
+import {
+  subscribeUnreadCount,
+  fetchDriverUnreadCount,
+  getDriverUnreadCount,
+} from "../services/notificationService";
 
 const { width } = Dimensions.get("window");
 
@@ -25,11 +30,10 @@ const PRIMARY = "#2563EB";
 const INACTIVE = "#94A3B8";
 const TAB_BG = "#FFFFFF";
 const ACTIVE_BG = "#EFF6FF";
-const BADGE_BG = "#EF4444";
 const isTablet = width >= 768;
 
 // ── Tab Item ──────────────────────────────────────────────────
-const TabIcon = ({ focused, icon, label, unreadCount = 0 }) => (
+const TabIcon = ({ focused, icon, label, badgeCount = 0 }) => (
   <View style={styles.tabItem}>
     <View
       style={[styles.iconBadgeWrap, focused && styles.iconBadgeWrapActive]}
@@ -40,11 +44,13 @@ const TabIcon = ({ focused, icon, label, unreadCount = 0 }) => (
         size={isTablet ? 24 : 22}
         color={focused ? PRIMARY : INACTIVE}
       />
-      {unreadCount > 0 && (
-        <View style={styles.badge}>
-          <Text style={styles.badgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text>
+      {badgeCount > 0 ? (
+        <View style={styles.tabBadge}>
+          <Text style={styles.tabBadgeText}>
+            {badgeCount > 9 ? "9+" : badgeCount}
+          </Text>
         </View>
-      )}
+      ) : null}
     </View>
     <Text style={[styles.label, focused && styles.activeLabel]}>{label}</Text>
   </View>
@@ -53,28 +59,15 @@ const TabIcon = ({ focused, icon, label, unreadCount = 0 }) => (
 // ── Custom Tab Bar ────────────────────────────────────────────
 function CustomTabBar({ state, descriptors, navigation }) {
   const insets = useSafeAreaInsets();
-  const [unreadCount, setUnreadCount] = useState(0);
+  const [unreadCount, setUnreadCount] = React.useState(() => getDriverUnreadCount());
 
-  useEffect(() => {
-    let isMounted = true;
-    const fetchUnread = async () => {
-      try {
-        const res = await API.get("/notifications?limit=1").catch(() => null);
-        if (!isMounted || !res) return;
-        const count = Number(res?.unreadCount ?? res?.data?.unreadCount ?? 0) || 0;
-        setUnreadCount(count);
-      } catch {
-        // silent
-      }
-    };
-
-    fetchUnread();
-    const interval = setInterval(fetchUnread, 30000);
-    return () => {
-      isMounted = false;
-      clearInterval(interval);
-    };
-  }, [state.index]);
+  React.useEffect(() => {
+    fetchDriverUnreadCount().catch(() => {});
+    const unsub = subscribeUnreadCount((count) => {
+      setUnreadCount(count);
+    });
+    return unsub;
+  }, []);
 
   return (
     <View
@@ -123,6 +116,8 @@ function CustomTabBar({ state, descriptors, navigation }) {
                   ? { library: "Ionicons", active: "notifications", inactive: "notifications-outline" }
                   : { library: "Ionicons", active: "person", inactive: "person-outline" };
 
+          const badgeCount = route.name === "AlertsTab" ? unreadCount : 0;
+
           return (
             <TouchableOpacity
               key={route.key}
@@ -131,14 +126,12 @@ function CustomTabBar({ state, descriptors, navigation }) {
               style={styles.tabButton}
             >
               <View style={styles.tabButtonInner}>
-                {options.tabBarIcon?.({ focused, isCenter: false }) || (
-                  <TabIcon
-                    focused={focused}
-                    label={tabLabel}
-                    icon={tabIcon}
-                    unreadCount={route.name === "AlertsTab" ? unreadCount : 0}
-                  />
-                )}
+                <TabIcon
+                  focused={focused}
+                  label={tabLabel}
+                  icon={tabIcon}
+                  badgeCount={badgeCount}
+                />
               </View>
             </TouchableOpacity>
           );
@@ -152,6 +145,7 @@ function CustomTabBar({ state, descriptors, navigation }) {
 export default function BottomTabs() {
   return (
     <Tab.Navigator
+      initialRouteName="HomeTab"
       screenOptions={{ headerShown: false, tabBarShowLabel: false }}
       tabBar={(props) => <CustomTabBar {...props} />}
     >
@@ -291,22 +285,22 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 
-  badge: {
+  tabBadge: {
     position: "absolute",
-    top: -2,
-    right: -2,
-    minWidth: 18,
-    height: 18,
-    paddingHorizontal: 4,
-    borderRadius: 9,
-    backgroundColor: BADGE_BG,
+    top: 2,
+    right: 2,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: "#EF4444",
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 3,
   },
 
-  badgeText: {
+  tabBadgeText: {
     color: "#FFFFFF",
-    fontSize: 10,
-    fontWeight: "700",
+    fontSize: 9,
+    fontWeight: "900",
   },
 });

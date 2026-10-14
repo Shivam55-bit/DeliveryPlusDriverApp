@@ -403,7 +403,7 @@ export default function JobCompletionTermsScreen({ navigation, route }) {
           style={[styles.continueBtn, !isContinueReady && styles.continueBtnDisabled]}
           onPress={handleContinue}
           disabled={!isContinueReady}
-          activeOpacity={0.8}
+          activeOpacity={0.7}
         >
           <Text style={styles.continueBtnText}>Continue to Signature</Text>
           <AppIcon library="Ionicons" name="arrow-forward" size={18} color="#FFF" />

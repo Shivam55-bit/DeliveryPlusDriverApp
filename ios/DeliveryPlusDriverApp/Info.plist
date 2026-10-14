@@ -36,7 +36,11 @@
 	<key>NSCameraUsageDescription</key>
 	<string>This app needs camera access to capture proof of delivery photos.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Location access is used to support delivery features.</string>
+	<string>DeliveryPlus shares your current location with dispatch only while you are online.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>DeliveryPlus shares your current location with dispatch while you are online, including during an active delivery when the app is in the background.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>DeliveryPlus shares your current location with dispatch while you are online, including during an active delivery when the app is in the background.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>This app needs permission to save delivery photos to your photo library.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
@@ -53,6 +57,7 @@
 	<array>
 		<string>fetch</string>
 		<string>remote-notification</string>
+		<string>location</string>
 	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>

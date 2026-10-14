@@ -1,5 +1,6 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Keyboard,
   KeyboardAvoidingView,
@@ -21,6 +22,10 @@ import LinearGradient from "react-native-linear-gradient";
 
 import AppIcon from "../components/common/AppIcon";
 import colors from "../utils/colors";
+import {
+  updateAuthenticatedDriverProfile,
+  validateDriverProfileUpdates,
+} from "../services/driverProfile";
 
 const FALLBACK = {
   primary: colors?.primary || "#0B3B69",
@@ -61,17 +66,9 @@ const FIELD_CONFIG = {
     keyboardType: "email-address",
     autoCapitalize: "none",
   },
-  vehicle: {
-    label: "Vehicle Details",
-    placeholder: "Enter vehicle model and registration",
-    iconLibrary: "MaterialCommunityIcons",
-    iconName: "truck-outline",
-    keyboardType: "default",
-    autoCapitalize: "characters",
-  },
 };
 
-export default function EditProfileScreen({ navigation }) {
+export default function EditProfileScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const isCompactPhone = width < 390;
@@ -79,15 +76,33 @@ export default function EditProfileScreen({ navigation }) {
 
   const phoneRef = useRef(null);
   const emailRef = useRef(null);
-  const vehicleRef = useRef(null);
+  const savingRef = useRef(false);
 
-  const [name, setName] = useState("Shivam Driver");
-  const [phone, setPhone] = useState("+91 98765 43210");
-  const [email, setEmail] = useState("shivam.driver@example.com");
-  const [vehicle, setVehicle] = useState("Tata Ace | MH12AB1234");
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
 
   const [focusedField, setFocusedField] = useState("");
   const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState({});
+
+  useEffect(() => {
+    const profile = route?.params?.profile;
+    setName(
+      profile?.name && profile.name !== "Name not provided"
+        ? profile.name
+        : ""
+    );
+    setPhone(
+      profile?.phone && profile.phone !== "Not provided"
+        ? profile.phone
+        : ""
+    );
+    setEmail(profile?.email || "Not provided");
+    setErrors({});
+  }, [route?.params?.profile]);
+
+  const isVerified = Boolean(route?.params?.profile?.isVerified);
 
   const initials = useMemo(() => {
     const value = String(name || "").trim();
@@ -101,33 +116,22 @@ export default function EditProfileScreen({ navigation }) {
       .join("");
   }, [name]);
 
-  const isValid = useMemo(() => {
-    const cleanName = name.trim();
-    const cleanPhone = phone.trim();
-    const cleanEmail = email.trim();
-
-    return (
-      cleanName.length >= 2 &&
-      cleanPhone.length >= 7 &&
-      /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)
-    );
-  }, [email, name, phone]);
-
   const handleSave = async () => {
-    if (!isValid || saving) {
-      Alert.alert(
-        "Check profile details",
-        "Please enter a valid name, phone number and email address."
-      );
-      return;
-    }
+    if (savingRef.current) return;
+
+    const validationErrors = validateDriverProfileUpdates({ name, phone });
+    setErrors(validationErrors);
+    if (Object.keys(validationErrors).length > 0) return;
 
     Keyboard.dismiss();
+    savingRef.current = true;
     setSaving(true);
 
     try {
-      // Replace this block with the existing profile update API call.
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await updateAuthenticatedDriverProfile({
+        name: name.trim(),
+        phone: phone.trim(),
+      });
 
       Alert.alert(
         "Profile updated",
@@ -147,6 +151,7 @@ export default function EditProfileScreen({ navigation }) {
           "Unable to update your profile."
       );
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -155,10 +160,12 @@ export default function EditProfileScreen({ navigation }) {
     key,
     value,
     onChangeText,
+    onValueChange,
     inputRef,
     returnKeyType,
     onSubmitEditing,
     editable = true,
+    error,
   }) => {
     const config = FIELD_CONFIG[key];
     const isFocused = focusedField === key;
@@ -192,7 +199,7 @@ export default function EditProfileScreen({ navigation }) {
             ref={inputRef}
             style={styles.input}
             value={value}
-            onChangeText={onChangeText}
+            onChangeText={onValueChange || onChangeText}
             placeholder={config.placeholder}
             placeholderTextColor="#9AA8BC"
             keyboardType={config.keyboardType}
@@ -207,7 +214,7 @@ export default function EditProfileScreen({ navigation }) {
             numberOfLines={1}
           />
 
-          {value ? (
+          {value && key !== "email" ? (
             <View style={styles.fieldStatus}>
               <AppIcon
                 library="Ionicons"
@@ -218,6 +225,7 @@ export default function EditProfileScreen({ navigation }) {
             </View>
           ) : null}
         </View>
+        {error ? <Text style={styles.fieldError}>{error}</Text> : null}
       </View>
     );
   };
@@ -306,18 +314,19 @@ export default function EditProfileScreen({ navigation }) {
                     {name || "Driver"}
                   </Text>
 
-                  <View style={styles.verifiedRow}>
-                    <AppIcon
-                      library="Ionicons"
-                      name="checkmark-circle"
-                      size={16}
-                      color="#5EE6B3"
-                    />
-
-                    <Text style={styles.verifiedText}>
-                      Verified driver profile
-                    </Text>
-                  </View>
+                  {isVerified ? (
+                    <View style={styles.verifiedRow}>
+                      <AppIcon
+                        library="Ionicons"
+                        name="checkmark-circle"
+                        size={16}
+                        color="#5EE6B3"
+                      />
+                      <Text style={styles.verifiedText}>
+                        Verified driver profile
+                      </Text>
+                    </View>
+                  ) : null}
                 </View>
               </View>
             </LinearGradient>
@@ -336,7 +345,7 @@ export default function EditProfileScreen({ navigation }) {
                 <View style={styles.formHeadingText}>
                   <Text style={styles.formTitle}>Profile Details</Text>
                   <Text style={styles.formSubtitle}>
-                    Keep your personal and vehicle information up to date.
+                    Update your personal contact information.
                   </Text>
                 </View>
               </View>
@@ -346,7 +355,11 @@ export default function EditProfileScreen({ navigation }) {
               {renderField({
                 key: "name",
                 value: name,
-                onChangeText: setName,
+                onValueChange: (value) => {
+                  setName(value);
+                  setErrors((current) => ({ ...current, name: "" }));
+                },
+                error: errors.name,
                 returnKeyType: "next",
                 onSubmitEditing: () => phoneRef.current?.focus(),
               })}
@@ -354,28 +367,22 @@ export default function EditProfileScreen({ navigation }) {
               {renderField({
                 key: "phone",
                 value: phone,
-                onChangeText: setPhone,
+                onValueChange: (value) => {
+                  setPhone(value);
+                  setErrors((current) => ({ ...current, phone: "" }));
+                },
+                error: errors.phone,
                 inputRef: phoneRef,
-                returnKeyType: "next",
-                onSubmitEditing: () => emailRef.current?.focus(),
+                returnKeyType: "done",
+                onSubmitEditing: handleSave,
               })}
 
               {renderField({
                 key: "email",
                 value: email,
-                onChangeText: setEmail,
                 inputRef: emailRef,
-                returnKeyType: "next",
-                onSubmitEditing: () => vehicleRef.current?.focus(),
-              })}
-
-              {renderField({
-                key: "vehicle",
-                value: vehicle,
-                onChangeText: setVehicle,
-                inputRef: vehicleRef,
                 returnKeyType: "done",
-                onSubmitEditing: handleSave,
+                editable: false,
               })}
 
               <View style={styles.helperCard}>
@@ -389,7 +396,7 @@ export default function EditProfileScreen({ navigation }) {
                 </View>
 
                 <Text style={styles.helperText}>
-                  Changes to vehicle details may require admin verification.
+                  Email and assigned vehicle details are managed by your account administrator.
                 </Text>
               </View>
             </View>
@@ -407,17 +414,17 @@ export default function EditProfileScreen({ navigation }) {
           <TouchableOpacity
             style={[
               styles.saveButton,
-              (!isValid || saving) && styles.saveButtonDisabled,
+              saving && styles.saveButtonDisabled,
             ]}
             onPress={handleSave}
-            disabled={!isValid || saving}
+            disabled={saving}
             activeOpacity={0.88}
             accessibilityRole="button"
             accessibilityLabel="Save profile changes"
           >
             <LinearGradient
               colors={
-                isValid && !saving
+                !saving
                   ? [FALLBACK.primary, FALLBACK.accent]
                   : ["#CBD5E1", "#D8E0EB"]
               }
@@ -425,12 +432,16 @@ export default function EditProfileScreen({ navigation }) {
               end={{ x: 1, y: 0 }}
               style={styles.saveButtonGradient}
             >
-              <AppIcon
-                library="Ionicons"
-                name={saving ? "time-outline" : "checkmark-circle-outline"}
-                size={21}
-                color={FALLBACK.textInverse}
-              />
+              {saving ? (
+                <ActivityIndicator color={FALLBACK.textInverse} />
+              ) : (
+                <AppIcon
+                  library="Ionicons"
+                  name="checkmark-circle-outline"
+                  size={21}
+                  color={FALLBACK.textInverse}
+                />
+              )}
 
               <Text style={styles.saveButtonText}>
                 {saving ? "Saving..." : "Save Changes"}
@@ -667,6 +678,14 @@ const styles = StyleSheet.create({
 
   fieldGroup: {
     marginBottom: 17,
+  },
+  fieldError: {
+    marginTop: 6,
+    marginLeft: 4,
+    color: FALLBACK.danger,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: "600",
   },
 
   fieldLabel: {

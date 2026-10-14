@@ -200,13 +200,13 @@ export default function SignInScreen({ navigation }) {
         payload?.data?.user ??
         payload?.data?.driver ??
         payload?.profile ??
-        payload?.data ??
-        { email: cleanEmail, name: cleanEmail.split("@")[0] };
+        null;
 
-      if (token) {
-        await setAuthToken(token, userObj);
+      if (!token) {
+        throw new Error("The login response did not include an access token.");
       }
 
+      await setAuthToken(token, userObj);
       navigation.replace("Home");
     } catch (error) {
       let message = "Invalid email or password.";
@@ -269,8 +269,9 @@ export default function SignInScreen({ navigation }) {
 
       const { user, idToken } = res;
 
-      // Authenticate with backend or establish driver session
+      // Exchange Google credentials for a backend-issued driver session.
       let token = null;
+      let authenticatedUser = null;
       try {
         let response;
         try {
@@ -283,6 +284,9 @@ export default function SignInScreen({ navigation }) {
             role: "driver",
           });
         } catch (err) {
+          if (err?.response?.status !== 404) {
+            throw err;
+          }
           response = await API.post("/auth/social-login", {
             provider: "google",
             idToken,
@@ -297,18 +301,34 @@ export default function SignInScreen({ navigation }) {
           payload?.token ??
           payload?.data?.accessToken ??
           payload?.data?.token;
+        authenticatedUser =
+          payload?.user ??
+          payload?.driver ??
+          payload?.data?.user ??
+          payload?.data?.driver ??
+          null;
       } catch (backendError) {
-        console.log("[SignIn] Backend google auth fallback:", backendError?.message);
-        // Fallback: driver session token
-        if (user.email) {
-          token = `google-session-${user.id || Date.now()}`;
-        }
+        console.warn(
+          "[SignIn] Google authentication failed:",
+          backendError?.message
+        );
+        Alert.alert(
+          "Google Sign In",
+          backendError?.response?.data?.message ||
+            "Unable to authenticate with Delivery Plus. Please try again."
+        );
+        return;
       }
 
-      if (token) {
-        await setAuthToken(token, user);
+      if (!token) {
+        Alert.alert(
+          "Google Sign In",
+          "The authentication response did not include an access token."
+        );
+        return;
       }
 
+      await setAuthToken(token, authenticatedUser);
       navigation.replace("Home");
     } catch (err) {
       console.error("[SignIn] Google sign in unexpected error:", err);
@@ -319,26 +339,6 @@ export default function SignInScreen({ navigation }) {
     } finally {
       setGoogleLoading(false);
     }
-  };
-
-  const handleSkipLogin = async () => {
-    try {
-      const mockTestDriver = {
-        _id: 'test-driver-001',
-        id: 'test-driver-001',
-        name: 'Test Driver',
-        email: 'testdriver@deliveryplus.com',
-        phone: '+91 9876543210',
-        vehicleType: 'Tata Ace',
-        vehicleNumber: 'DL 01 AB 1234',
-        status: 'online',
-        isOnline: true,
-      };
-      await setAuthToken('mock-test-driver-token', mockTestDriver);
-    } catch (e) {
-      console.log('[SignIn] Skip login error:', e);
-    }
-    navigation.replace('Home');
   };
 
   const handleForgotPassword = () => {
@@ -390,18 +390,6 @@ export default function SignInScreen({ navigation }) {
       </View>
 
       <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
-        {/* Top Header with Skip Button for quick testing */}
-        <View style={styles.topBar}>
-          <TouchableOpacity
-            style={styles.skipHeaderBtn}
-            onPress={handleSkipLogin}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="flash" size={14} color="#38BDF8" style={{ marginRight: 4 }} />
-            <Text style={styles.skipHeaderBtnText}>Skip (Testing)</Text>
-            <Ionicons name="chevron-forward" size={14} color="#38BDF8" />
-          </TouchableOpacity>
-        </View>
         <KeyboardAvoidingView
           style={styles.flex}
           behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -596,17 +584,6 @@ export default function SignInScreen({ navigation }) {
                   </LinearGradient>
                 </TouchableOpacity>
 
-                {/* Skip Login for Testing */}
-                <TouchableOpacity
-                  activeOpacity={0.85}
-                  onPress={handleSkipLogin}
-                  style={styles.skipCardBtn}
-                >
-                  <Ionicons name="flask-outline" size={16} color="#38BDF8" />
-                  <Text style={styles.skipCardBtnText}>Skip Login for Testing</Text>
-                  <Ionicons name="arrow-forward" size={14} color="#38BDF8" />
-                </TouchableOpacity>
-
                 {/* Don't have an account? Sign Up row */}
                 <View style={styles.switchAuthRow}>
                   <Text style={styles.switchAuthPrompt}>
@@ -662,47 +639,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#030814",
-  },
-  topBar: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    alignItems: "center",
-    paddingHorizontal: 20,
-    paddingTop: Platform.OS === "ios" ? 4 : 8,
-    paddingBottom: 4,
-    zIndex: 10,
-  },
-  skipHeaderBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(56, 189, 248, 0.15)",
-    borderWidth: 1,
-    borderColor: "rgba(56, 189, 248, 0.4)",
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 20,
-  },
-  skipHeaderBtnText: {
-    color: "#38BDF8",
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  skipCardBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(14, 165, 233, 0.12)",
-    borderWidth: 1,
-    borderColor: "rgba(56, 189, 248, 0.38)",
-    borderRadius: 14,
-    height: 48,
-    marginTop: 12,
-    gap: 8,
-  },
-  skipCardBtnText: {
-    color: "#38BDF8",
-    fontSize: 14.5,
-    fontWeight: "600",
   },
   safeArea: {
     flex: 1,

@@ -5,24 +5,13 @@ require Pod::Executable.execute_command('node', ['-p',
     {paths: [process.argv[1]]},
   )', __dir__]).strip
 
-ENV['RCT_NEW_ARCH_ENABLED'] ||= '1'
-ENV['RCT_USE_PREBUILT_RNCORE'] ||= '0'
-ENV['RCT_USE_RN_DEP'] ||= '0'
-
 platform :ios, min_ios_version_supported
-$RNFirebaseDisableSPM = true
 prepare_react_native_project!
 
-linkage = ENV['USE_FRAMEWORKS']
-if linkage != nil
-  Pod::UI.puts "Configuring Pod with #{linkage}ally linked Frameworks".green
-  use_frameworks! :linkage => linkage.to_sym
-end
+$RNFirebaseDisableSPM = true
+use_modular_headers!
 
 target 'DeliveryPlusDriverApp' do
-  pod 'GoogleUtilities', :modular_headers => true
-  pod 'RecaptchaInterop', :modular_headers => true
-
   config = use_native_modules!
 
   use_react_native!(
@@ -32,11 +21,18 @@ target 'DeliveryPlusDriverApp' do
   )
 
   post_install do |installer|
+    # https://github.com/facebook/react-native/blob/main/packages/react-native/scripts/cocoapods/codegen.rb
     react_native_post_install(
       installer,
       config[:reactNativePath],
-      :mac_catalyst_enabled => false,
-      # :ccache_enabled => true
+      :mac_catalyst_enabled => false
     )
+
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |config|
+        config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
+        config.build_settings['GCC_TREAT_WARNINGS_AS_ERRORS'] = 'NO'
+      end
+    end
   end
 end

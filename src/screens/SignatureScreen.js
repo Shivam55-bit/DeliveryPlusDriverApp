@@ -447,7 +447,7 @@ export default function SignatureScreen({ navigation, route }) {
           style={styles.clearBtn}
           onPress={handleClearSignature}
           disabled={saving}
-          activeOpacity={0.8}
+          activeOpacity={0.7}
         >
           <Ionicons name="refresh-outline" size={17} color="#475569" />
           <Text style={styles.clearBtnText}>Clear & Redraw Signature</Text>
@@ -458,7 +458,7 @@ export default function SignatureScreen({ navigation, route }) {
           style={[styles.confirmBtnWrapper, saving && styles.confirmBtnDisabled]}
           onPress={handleConfirmPress}
           disabled={saving}
-          activeOpacity={0.88}
+          activeOpacity={0.7}
         >
           <LinearGradient
             colors={["#0098FF", "#00C6FF"]}

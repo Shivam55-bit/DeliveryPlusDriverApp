@@ -1,22 +1,32 @@
-import React, { useMemo, useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
+  ActivityIndicator,
   FlatList,
+  RefreshControl,
   StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
-  RefreshControl,
-  ActivityIndicator,
-  useWindowDimensions,
 } from "react-native";
 import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 
 import AppIcon from "../components/common/AppIcon";
-import API from "../services/api";
+import {
+  fetchDriverNotifications,
+  getDriverNotificationsCache,
+  loadPersistedDriverNotifications,
+  markDriverNotificationAsRead,
+  markAllDriverNotificationsAsRead,
+  subscribeNotifications,
+  subscribeUnreadCount,
+  getDriverUnreadCount,
+} from "../services/notificationService";
+import { OPERATIONAL_TIMEZONE } from "../utils/jobHelpers";
 
 const COLORS = {
   navy900: "#071E3B",
@@ -39,7 +49,11 @@ const COLORS = {
 
 const getNotificationIcon = (type) => {
   const normalizedType = String(type || "").toLowerCase();
-  if (normalizedType.includes("job") || normalizedType.includes("assign")) {
+  if (
+    normalizedType.includes("job") ||
+    normalizedType.includes("assign") ||
+    normalizedType.includes("dispatch")
+  ) {
     return {
       library: "MaterialCommunityIcons",
       name: "briefcase-plus-outline",
@@ -54,6 +68,15 @@ const getNotificationIcon = (type) => {
       name: "wallet-check-outline",
       color: "#16A34A",
       backgroundColor: "#DCFCE7",
+    };
+  }
+
+  if (normalizedType.includes("cancel") || normalizedType.includes("remove")) {
+    return {
+      library: "MaterialCommunityIcons",
+      name: "alert-octagon-outline",
+      color: "#EF4444",
+      backgroundColor: "#FEE2E2",
     };
   }
 
@@ -79,183 +102,203 @@ const formatTimeAgo = (dateInput) => {
     if (diffHours < 24) return `${diffHours} hr${diffHours > 1 ? "s" : ""} ago`;
     const diffDays = Math.floor(diffHours / 24);
     if (diffDays === 1) return "Yesterday";
-    return `${diffDays} days ago`;
+    if (diffDays < 7) return `${diffDays} days ago`;
+
+    // Operational Sydney timezone date formatting
+    return d.toLocaleDateString("en-AU", {
+      timeZone: OPERATIONAL_TIMEZONE,
+      day: "numeric",
+      month: "short",
+    });
   } catch {
     return "Recently";
   }
 };
 
-const NotificationCard = React.memo(
-  ({ item, onPress }) => {
-    const icon = getNotificationIcon(item.type);
+const NotificationCard = React.memo(({ item, onPress }) => {
+  const icon = getNotificationIcon(item.type);
+  const isUnread = Boolean(item.unread || !item.isRead);
 
-    return (
-      <TouchableOpacity
+  return (
+    <TouchableOpacity
+      style={[
+        styles.notificationCard,
+        isUnread && styles.notificationCardUnread,
+      ]}
+      activeOpacity={0.88}
+      onPress={() => onPress(item)}
+      accessibilityRole="button"
+      accessibilityLabel={`${item.title}. ${item.details || item.body || item.message}`}
+    >
+      <View
         style={[
-          styles.notificationCard,
-          item.unread && styles.notificationCardUnread,
+          styles.notificationIcon,
+          { backgroundColor: icon.backgroundColor },
         ]}
-        activeOpacity={0.88}
-        onPress={() => onPress(item)}
-        accessibilityRole="button"
-        accessibilityLabel={`${item.title}. ${item.details}`}
       >
-        <View
-          style={[
-            styles.notificationIcon,
-            { backgroundColor: icon.backgroundColor },
-          ]}
-        >
-          <AppIcon
-            library={icon.library}
-            name={icon.name}
-            size={24}
-            color={icon.color}
-          />
+        <AppIcon
+          library={icon.library}
+          name={icon.name}
+          size={24}
+          color={icon.color}
+        />
+      </View>
+
+      <View style={styles.notificationContent}>
+        <View style={styles.notificationTitleRow}>
+          <Text style={styles.notificationTitle} numberOfLines={1}>
+            {item.title}
+          </Text>
+
+          {isUnread ? <View style={styles.unreadDot} /> : null}
         </View>
 
-        <View style={styles.notificationContent}>
-          <View style={styles.notificationTitleRow}>
-            <Text
-              style={styles.notificationTitle}
-              numberOfLines={1}
-            >
-              {item.title}
-            </Text>
+        <Text style={styles.notificationDetails} numberOfLines={2}>
+          {item.details || item.body || item.message}
+        </Text>
 
-            {item.unread ? (
-              <View style={styles.unreadDot} />
-            ) : null}
+        {(item.jobNumber || item.jobId) ? (
+          <View style={styles.jobTagRow}>
+            <View style={styles.jobTagPill}>
+              <AppIcon
+                library="MaterialCommunityIcons"
+                name="clipboard-text-outline"
+                size={11}
+                color={COLORS.blue600}
+              />
+              <Text style={styles.jobTagText}>
+                {item.jobNumber || `Job #${String(item.jobId).slice(-6)}`}
+              </Text>
+            </View>
           </View>
+        ) : null}
+      </View>
 
-          <Text
-            style={styles.notificationDetails}
-            numberOfLines={2}
-          >
-            {item.details || item.body || item.message}
-          </Text>
-        </View>
+      <View style={styles.notificationMeta}>
+        <Text style={styles.notificationTime} numberOfLines={1}>
+          {item.timeFormatted || formatTimeAgo(item.createdAt || item.timestamp)}
+        </Text>
 
-        <View style={styles.notificationMeta}>
-          <Text
-            style={styles.notificationTime}
-            numberOfLines={1}
-          >
-            {item.timeFormatted || formatTimeAgo(item.createdAt || item.timestamp)}
-          </Text>
-
-          <AppIcon
-            library="Feather"
-            name="chevron-right"
-            size={18}
-            color={COLORS.subtle}
-          />
-        </View>
-      </TouchableOpacity>
-    );
-  }
-);
+        <AppIcon
+          library="Feather"
+          name="chevron-right"
+          size={18}
+          color={COLORS.subtle}
+        />
+      </View>
+    </TouchableOpacity>
+  );
+});
 
 export default function NotificationsScreen({ navigation }) {
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
-
   const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
+  const isMountedRef = useRef(true);
 
-  const fetchNotifications = useCallback(async () => {
+  const loadNotifications = useCallback(async ({ silent = false, force = false } = {}) => {
+    if (!silent) {
+      setLoading(true);
+    }
+    setFetchError(null);
+
+    // Instant cache hydration
     try {
-      const res = await API.get("/notifications");
-      const rawList = res?.notifications || res?.data?.notifications || (Array.isArray(res) ? res : []);
-      const normalized = rawList.map((item, idx) => ({
-        id: item._id || item.id || `notif_${idx}`,
-        title: item.title || "Notification",
-        details: item.message || item.body || item.details || "",
-        type: item.type || (item.data?.type || "job"),
-        unread: item.read === false || item.unread === true || item.isRead === false,
-        jobId: item.jobId || item.data?.jobId || item.data?.id,
-        createdAt: item.createdAt || item.timestamp,
-        timeFormatted: formatTimeAgo(item.createdAt || item.timestamp),
-      }));
-      setNotifications(normalized);
+      const cached = getDriverNotificationsCache() || (await loadPersistedDriverNotifications());
+      if (cached && Array.isArray(cached) && isMountedRef.current) {
+        setNotifications(cached);
+        setUnreadCount(getDriverUnreadCount());
+        setLoading(false);
+      }
+    } catch {}
+
+    try {
+      const result = await fetchDriverNotifications({ force });
+      if (isMountedRef.current && result) {
+        setNotifications(result.notifications || []);
+        setUnreadCount(result.unreadCount || 0);
+      }
     } catch (err) {
-      console.log("[Notifications] API load error:", err?.message);
+      if (isMountedRef.current) {
+        setFetchError(err);
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 
   useEffect(() => {
-    fetchNotifications();
-  }, [fetchNotifications]);
+    isMountedRef.current = true;
+    loadNotifications({ silent: false, force: false });
 
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    fetchNotifications();
-  }, [fetchNotifications]);
+    const unsubscribeNotifications = subscribeNotifications((list) => {
+      if (isMountedRef.current) {
+        setNotifications(list);
+      }
+    });
 
-  const unreadCount = useMemo(
-    () =>
-      notifications.filter(
-        (notification) => notification.unread
-      ).length,
-    [notifications]
+    const unsubscribeUnread = subscribeUnreadCount((count) => {
+      if (isMountedRef.current) {
+        setUnreadCount(count);
+      }
+    });
+
+    return () => {
+      isMountedRef.current = false;
+      unsubscribeNotifications();
+      unsubscribeUnread();
+    };
+  }, [loadNotifications]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadNotifications({ silent: true, force: true });
+    }, [loadNotifications])
   );
 
-  const handleNotificationPress = async (item) => {
-    // 1. Mark as read locally and on backend
-    if (item.unread) {
-      setNotifications((previous) =>
-        previous.map((n) =>
-          n.id === item.id ? { ...n, unread: false } : n
-        )
-      );
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadNotifications({ silent: true, force: true });
+  }, [loadNotifications]);
 
-      try {
-        await API.patch(`/notifications/${item.id}/read`).catch(() => {
-          return API.put(`/notifications/${item.id}/read`);
-        });
-      } catch (e) {
-        // quiet fallback
+  const handleNotificationPress = useCallback(
+    async (item) => {
+      if (!item.isRead) {
+        markDriverNotificationAsRead(item.id || item._id);
       }
-    }
 
-    // 2. Navigate based on notification content
-    if (item.jobId) {
-      navigation?.navigate("JobDetail", { jobId: item.jobId, id: item.jobId });
-      return;
-    }
+      const jobId = item.jobId || item.job?._id || item.job?.id || item.data?.jobId;
+      if (jobId) {
+        navigation?.navigate("JobDetail", { jobId, id: jobId });
+        return;
+      }
 
-    if (String(item.type).toLowerCase().includes("payment")) {
-      navigation?.navigate("PaymentMethods");
-      return;
-    }
-  };
+      if (String(item.type).toLowerCase().includes("payment")) {
+        navigation?.navigate("PaymentMethods");
+        return;
+      }
+    },
+    [navigation]
+  );
 
-  const markAllRead = async () => {
-    setNotifications((previous) =>
-      previous.map((item) => ({
-        ...item,
-        unread: false,
-      }))
-    );
+  const handleMarkAllRead = useCallback(async () => {
+    await markAllDriverNotificationsAsRead();
+  }, []);
 
-    try {
-      await API.patch("/notifications/read-all").catch(() => {
-        return API.put("/notifications/read-all");
-      });
-    } catch (err) {
-      console.log("[Notifications] Mark all read error:", err?.message);
-    }
-  };
-
-  const renderNotification = ({ item }) => (
-    <NotificationCard
-      item={item}
-      onPress={handleNotificationPress}
-    />
+  const renderNotification = useCallback(
+    ({ item }) => (
+      <NotificationCard
+        item={item}
+        onPress={handleNotificationPress}
+      />
+    ),
+    [handleNotificationPress]
   );
 
   return (
@@ -276,51 +319,30 @@ export default function NotificationsScreen({ navigation }) {
             <Text style={styles.headerTitle}>Notifications</Text>
             <Text style={styles.summaryText}>
               {unreadCount > 0
-                ? `${unreadCount} unread ${
-                    unreadCount === 1 ? "notification" : "notifications"
-                  }`
-                : "You are all caught up"}
+                ? `You have ${unreadCount} unread update${unreadCount > 1 ? "s" : ""}`
+                : "All notifications are caught up"}
             </Text>
           </View>
 
-          <TouchableOpacity
-            style={[
-              styles.markAllButton,
-              unreadCount === 0 && styles.markAllButtonDisabled,
-            ]}
-            onPress={markAllRead}
-            disabled={unreadCount === 0}
-            activeOpacity={0.85}
-            accessibilityRole="button"
-            accessibilityLabel="Mark all notifications as read"
-          >
-            <AppIcon
-              library="MaterialCommunityIcons"
-              name="check-all"
-              size={17}
-              color={unreadCount === 0 ? COLORS.subtle : COLORS.blue600}
-            />
-            <Text
-              style={[
-                styles.markAllText,
-                unreadCount === 0 && styles.markAllTextDisabled,
-              ]}
+          {unreadCount > 0 ? (
+            <TouchableOpacity
+              style={styles.markAllReadButton}
+              onPress={handleMarkAllRead}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Mark all notifications as read"
             >
-              Mark all read
-            </Text>
-          </TouchableOpacity>
+              <Text style={styles.markAllReadText}>Mark all read</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       </View>
 
       <View style={styles.content}>
         <View style={styles.sectionHeader}>
           <View>
-            <Text style={styles.sectionEyebrow}>
-              RECENT ACTIVITY
-            </Text>
-            <Text style={styles.sectionTitle}>
-              Latest updates
-            </Text>
+            <Text style={styles.sectionEyebrow}>RECENT ACTIVITY</Text>
+            <Text style={styles.sectionTitle}>Latest updates</Text>
           </View>
 
           <View style={styles.totalPill}>
@@ -330,52 +352,82 @@ export default function NotificationsScreen({ navigation }) {
           </View>
         </View>
 
-        {loading && !refreshing ? (
+        {loading && notifications.length === 0 ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={COLORS.blue600} />
+            <Text style={styles.loadingText}>Loading notifications...</Text>
           </View>
         ) : (
           <FlatList
             data={notifications}
-            keyExtractor={(item) => item.id}
+            keyExtractor={(item) => String(item.id || item._id)}
             renderItem={renderNotification}
             showsVerticalScrollIndicator={false}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                colors={[COLORS.blue600]}
-                tintColor={COLORS.blue600}
-              />
-            }
             contentContainerStyle={[
               styles.listContent,
               {
                 paddingBottom: 130 + insets.bottom,
               },
             ]}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={handleRefresh}
+                colors={[COLORS.blue600]}
+                tintColor={COLORS.blue600}
+              />
+            }
             ItemSeparatorComponent={() => (
               <View style={styles.cardGap} />
             )}
             ListEmptyComponent={
-              <View style={styles.emptyCard}>
-                <View style={styles.emptyIcon}>
-                  <AppIcon
-                    library="Ionicons"
-                    name="notifications-off-outline"
-                    size={44}
-                    color={COLORS.blue500}
-                  />
+              fetchError && notifications.length === 0 ? (
+                <View style={styles.emptyCard}>
+                  <View style={[styles.emptyIcon, { backgroundColor: "#FEE2E2" }]}>
+                    <AppIcon
+                      library="Ionicons"
+                      name="alert-circle-outline"
+                      size={44}
+                      color={COLORS.danger}
+                    />
+                  </View>
+
+                  <Text style={styles.emptyTitle}>
+                    Unable to load notifications
+                  </Text>
+
+                  <Text style={styles.emptySubtitle}>
+                    Could not connect to the notification service. Please check your connection and retry.
+                  </Text>
+
+                  <TouchableOpacity
+                    style={styles.retryButton}
+                    onPress={() => loadNotifications({ force: true })}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.retryButtonText}>Retry</Text>
+                  </TouchableOpacity>
                 </View>
+              ) : (
+                <View style={styles.emptyCard}>
+                  <View style={styles.emptyIcon}>
+                    <AppIcon
+                      library="Ionicons"
+                      name="notifications-outline"
+                      size={44}
+                      color={COLORS.blue500}
+                    />
+                  </View>
 
-                <Text style={styles.emptyTitle}>
-                  No notifications yet
-                </Text>
+                  <Text style={styles.emptyTitle}>
+                    No notifications yet
+                  </Text>
 
-                <Text style={styles.emptySubtitle}>
-                  Job alerts and account updates will appear here.
-                </Text>
-              </View>
+                  <Text style={styles.emptySubtitle}>
+                    When dispatch assigns jobs, updates your schedule, or sends alerts, they will appear here.
+                  </Text>
+                </View>
+              )
             }
           />
         )}
@@ -424,31 +476,17 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
 
-  markAllButton: {
+  markAllReadButton: {
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 12,
-    backgroundColor: "#F0F7FF",
-    borderWidth: 1,
-    borderColor: "rgba(15, 111, 186, 0.15)",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
+    backgroundColor: "#E0F2FE",
   },
 
-  markAllButtonDisabled: {
-    backgroundColor: "#F8FAFC",
-    borderColor: "rgba(148, 163, 184, 0.15)",
-  },
-
-  markAllText: {
+  markAllReadText: {
     color: COLORS.blue600,
     fontSize: 12,
     fontWeight: "700",
-  },
-
-  markAllTextDisabled: {
-    color: COLORS.subtle,
   },
 
   content: {
@@ -458,8 +496,8 @@ const styles = StyleSheet.create({
 
   sectionHeader: {
     paddingHorizontal: 18,
-    paddingTop: 22,
-    paddingBottom: 14,
+    paddingTop: 20,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "flex-end",
     justifyContent: "space-between",
@@ -475,14 +513,14 @@ const styles = StyleSheet.create({
   sectionTitle: {
     marginTop: 4,
     color: COLORS.text,
-    fontSize: 23,
+    fontSize: 22,
     fontWeight: "900",
     letterSpacing: -0.3,
   },
 
   totalPill: {
     minWidth: 38,
-    height: 34,
+    height: 32,
     paddingHorizontal: 10,
     borderRadius: 13,
     backgroundColor: "#E7F3FF",
@@ -496,6 +534,20 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
 
+  loadingContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingBottom: 60,
+  },
+
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: COLORS.muted,
+    fontWeight: "600",
+  },
+
   listContent: {
     flexGrow: 1,
     paddingHorizontal: 16,
@@ -506,35 +558,34 @@ const styles = StyleSheet.create({
   },
 
   notificationCard: {
-    minHeight: 104,
+    minHeight: 100,
     backgroundColor: COLORS.surface,
-    borderRadius: 22,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: COLORS.border,
     paddingHorizontal: 15,
-    paddingVertical: 15,
+    paddingVertical: 14,
     flexDirection: "row",
     alignItems: "center",
     shadowColor: "#193D63",
     shadowOffset: {
       width: 0,
-      height: 6,
+      height: 4,
     },
-    shadowOpacity: 0.07,
-    shadowRadius: 14,
-    elevation: 3,
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 2,
   },
 
   notificationCardUnread: {
-    backgroundColor:
-      COLORS.unreadBackground,
+    backgroundColor: COLORS.unreadBackground,
     borderColor: COLORS.unreadBorder,
   },
 
   notificationIcon: {
-    width: 52,
-    height: 52,
-    borderRadius: 17,
+    width: 48,
+    height: 48,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
     marginRight: 13,
@@ -555,8 +606,8 @@ const styles = StyleSheet.create({
   notificationTitle: {
     flexShrink: 1,
     color: COLORS.text,
-    fontSize: 15.5,
-    fontWeight: "900",
+    fontSize: 15,
+    fontWeight: "800",
   },
 
   unreadDot: {
@@ -569,18 +620,40 @@ const styles = StyleSheet.create({
   },
 
   notificationDetails: {
-    marginTop: 5,
+    marginTop: 4,
     color: COLORS.muted,
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 12.5,
+    lineHeight: 18,
     fontWeight: "500",
+  },
+
+  jobTagRow: {
+    marginTop: 6,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  jobTagPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    backgroundColor: "#EAF4FF",
+  },
+
+  jobTagText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: COLORS.blue600,
   },
 
   notificationMeta: {
     marginLeft: 10,
     alignItems: "flex-end",
     justifyContent: "space-between",
-    minHeight: 52,
+    minHeight: 48,
     flexShrink: 0,
   },
 
@@ -588,7 +661,7 @@ const styles = StyleSheet.create({
     maxWidth: 72,
     color: COLORS.subtle,
     fontSize: 10.5,
-    fontWeight: "800",
+    fontWeight: "700",
     textAlign: "right",
   },
 
@@ -605,9 +678,9 @@ const styles = StyleSheet.create({
   },
 
   emptyIcon: {
-    width: 88,
-    height: 88,
-    borderRadius: 30,
+    width: 84,
+    height: 84,
+    borderRadius: 28,
     backgroundColor: "#E7F3FF",
     alignItems: "center",
     justifyContent: "center",
@@ -616,7 +689,7 @@ const styles = StyleSheet.create({
   emptyTitle: {
     marginTop: 18,
     color: COLORS.text,
-    fontSize: 20,
+    fontSize: 19,
     fontWeight: "900",
   },
 
@@ -626,5 +699,19 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     textAlign: "center",
+  },
+
+  retryButton: {
+    marginTop: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 14,
+    backgroundColor: COLORS.navy900,
+  },
+
+  retryButtonText: {
+    color: COLORS.white,
+    fontSize: 13,
+    fontWeight: "700",
   },
 });

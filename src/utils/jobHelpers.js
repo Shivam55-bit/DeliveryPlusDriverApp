@@ -40,14 +40,109 @@ export const getDriverId = (userOrDriver) => {
   if (!userOrDriver) return "";
   if (typeof userOrDriver === "string") return userOrDriver.trim();
   return String(
+    userOrDriver.driverProfile?._id ||
+    userOrDriver.driverProfile?.id ||
+    userOrDriver.driverProfileId ||
+    userOrDriver.driver?._id ||
+    userOrDriver.driver?.id ||
+    (typeof userOrDriver.driver === "string" ? userOrDriver.driver : "") ||
+    (typeof userOrDriver.driverId === "object"
+      ? userOrDriver.driverId?._id || userOrDriver.driverId?.id
+      : userOrDriver.driverId) ||
+    userOrDriver.driver_id ||
     userOrDriver._id ||
     userOrDriver.id ||
-    userOrDriver.driverId ||
     userOrDriver.userId ||
-    userOrDriver.email ||
     ""
   ).trim();
 };
+
+export const getDriverIdentityIds = (userOrDriver) => {
+  if (!userOrDriver || typeof userOrDriver !== "object") {
+    const id = getDriverId(userOrDriver);
+    return id ? [id] : [];
+  }
+
+  return [
+    userOrDriver.driverProfile?._id,
+    userOrDriver.driverProfile?.id,
+    userOrDriver.driverProfileId,
+    userOrDriver.driver?._id,
+    userOrDriver.driver?.id,
+    typeof userOrDriver.driver === "string" ? userOrDriver.driver : null,
+    typeof userOrDriver.driverId === "object"
+      ? userOrDriver.driverId?._id ?? userOrDriver.driverId?.id
+      : userOrDriver.driverId,
+    userOrDriver.driver_id,
+    userOrDriver._id,
+    userOrDriver.id,
+    userOrDriver.userId,
+    userOrDriver.user?._id,
+    userOrDriver.user?.id,
+    typeof userOrDriver.user === "string" ? userOrDriver.user : null,
+    userOrDriver.account?._id,
+    userOrDriver.account?.id,
+  ]
+    .filter((id) => id !== null && id !== undefined && String(id).trim())
+    .map(String);
+};
+
+export const getAssignmentDriverIds = (assignment) => {
+  if (typeof assignment === "string") {
+    return [assignment.trim()];
+  }
+  if (!assignment || typeof assignment !== "object") {
+    return [];
+  }
+
+  const driverRef = assignment.driver;
+  const userRef = assignment.user;
+  const profileRef = assignment.driverProfile;
+  const driverId = assignment.driverId ?? assignment.driver_id;
+  const assignedToRef = assignment.assignedTo;
+
+  return [
+    typeof driverRef === "string" ? driverRef : driverRef?._id ?? driverRef?.id,
+    typeof driverId === "string" ? driverId : driverId?._id ?? driverId?.id,
+    typeof userRef === "string" ? userRef : userRef?._id ?? userRef?.id,
+    typeof profileRef === "string" ? profileRef : profileRef?._id ?? profileRef?.id,
+    typeof assignedToRef === "string" ? assignedToRef : assignedToRef?._id ?? assignedToRef?.id,
+    assignment.driverProfileId,
+    assignment.userId,
+  ]
+    .filter((id) => id !== null && id !== undefined && String(id).trim())
+    .map(String);
+};
+
+const createUnassignedAssignment = (currentUser) => ({
+  isAssigned: false,
+  assignmentId: null,
+  driverId: getDriverId(currentUser) || null,
+  driverName: currentUser?.name || "Driver",
+  assignedAt: null,
+  status: "unassigned",
+  isPending: false,
+  isInProgress: false,
+  isCompleted: false,
+  startedAt: null,
+  completedAt: null,
+  totalWorkedMinutes: null,
+  role: "none",
+  isPrimary: false,
+  startAgreement: null,
+  canStartWork: false,
+  canEndWork: false,
+  canCompleteJob: false,
+  pricing: null,
+  pricingSnapshot: null,
+  hourlyRate: null,
+  baseHours: null,
+  driverPrice: null,
+  driverDisplayPrice: null,
+  driverPriceType: "full",
+  showDriverPrice: false,
+  finalDriverAmount: null,
+});
 
 /**
  * Normalizes the current logged-in driver's specific assignment / work session.
@@ -232,7 +327,11 @@ export const resolveDriverPriceAmount = (myAssignment = {}, job = {}, priceType 
  * Normalizes the current logged-in driver's specific assignment / work session.
  * Guarantees that each driver gets their own independent timing, status, and agreement.
  */
-export const normalizeMyDriverAssignment = (rawJob = {}, currentUser = null) => {
+export const normalizeMyDriverAssignment = (
+  rawJob = {},
+  currentUser = null,
+  { requireDriverMatch = false } = {}
+) => {
   if (!rawJob || typeof rawJob !== "object") {
     return {
       isAssigned: false,
@@ -266,30 +365,41 @@ export const normalizeMyDriverAssignment = (rawJob = {}, currentUser = null) => 
   }
 
   const currentId = getDriverId(currentUser);
-  const currentEmail = String(currentUser?.email || "").trim().toLowerCase();
+  const currentIds = new Set(getDriverIdentityIds(currentUser));
 
   const jobOverallState = getJobState(rawJob);
 
   // 1. Direct assignment property from backend
   if (rawJob.myAssignment && typeof rawJob.myAssignment === "object") {
     const a = rawJob.myAssignment;
+    const assignmentIds = getAssignmentDriverIds(a);
+    // Driver-scoped job responses may omit the ID from their already-personalized assignment.
+    if (
+      (requireDriverMatch &&
+        (currentIds.size === 0 ||
+          (assignmentIds.length > 0 &&
+            !assignmentIds.some((id) => currentIds.has(id))))) ||
+      (!requireDriverMatch &&
+        assignmentIds.length > 0 &&
+        currentIds.size > 0 &&
+        !assignmentIds.some((id) => currentIds.has(id)))
+    ) {
+      return createUnassignedAssignment(currentUser);
+    }
+
     const aState = getJobState(a);
     const startedAt =
       a.startedAt ||
       a.jobStartedAt ||
       a.actualStartTime ||
-      (jobOverallState.isInProgress
-        ? rawJob.driverStartedAt || rawJob.startedAt || rawJob.jobStartedAt || rawJob.actualStartTime
-        : null);
+      null;
     const completedAt =
       a.completedAt ||
       a.endedAt ||
       a.actualEndTime ||
-      (jobOverallState.isCompleted
-        ? rawJob.driverCompletedAt || rawJob.completedAt || rawJob.endedAt || rawJob.actualEndTime
-        : null);
-    const isCompleted = aState.isCompleted || (jobOverallState.isCompleted && !aState.isInProgress) || Boolean(completedAt);
-    const isInProgress = !isCompleted && (aState.isInProgress || jobOverallState.isInProgress || Boolean(startedAt));
+      null;
+    const isCompleted = aState.isCompleted || Boolean(completedAt);
+    const isInProgress = !isCompleted && (aState.isInProgress || (Boolean(startedAt) && !aState.isCompleted));
     const isPending = !isCompleted && !isInProgress;
 
     const showDriverPrice = isDriverPriceVisible(a, rawJob);
@@ -375,17 +485,7 @@ export const normalizeMyDriverAssignment = (rawJob = {}, currentUser = null) => 
     if (Array.isArray(list) && list.length > 0) {
       const found = list.find((item) => {
         if (!item) return false;
-        if (typeof item === "string") {
-          return currentId && item.trim() === currentId;
-        }
-        const itemId = getDriverId(item.driver || item.driverId || item.user || item);
-        const itemEmail = String(
-          item.email || item.driver?.email || item.user?.email || ""
-        ).trim().toLowerCase();
-
-        if (currentId && itemId && itemId === currentId) return true;
-        if (currentEmail && itemEmail && itemEmail === currentEmail) return true;
-        return false;
+        return getAssignmentDriverIds(item).some((id) => currentIds.has(id));
       });
 
       if (found) {
@@ -396,25 +496,28 @@ export const normalizeMyDriverAssignment = (rawJob = {}, currentUser = null) => 
   }
 
   if (matchedAssignment) {
-    const aState = getJobState(matchedAssignment);
+    const hasOwnStatus = Boolean(
+      matchedAssignment.status ?? matchedAssignment.workStatus
+    );
+    const aState = hasOwnStatus
+      ? getJobState(matchedAssignment)
+      : jobOverallState;
     const startedAt =
       matchedAssignment.startedAt ||
       matchedAssignment.jobStartedAt ||
       matchedAssignment.actualStartTime ||
       matchedAssignment.workStartedAt ||
-      (jobOverallState.isInProgress
-        ? rawJob.driverStartedAt || rawJob.startedAt || rawJob.jobStartedAt || rawJob.actualStartTime
-        : null);
+      (hasOwnStatus ? null : (rawJob.driverStartedAt || rawJob.startedAt || rawJob.actualStartTime)) ||
+      null;
     const completedAt =
       matchedAssignment.completedAt ||
       matchedAssignment.endedAt ||
       matchedAssignment.actualEndTime ||
       matchedAssignment.workEndedAt ||
-      (jobOverallState.isCompleted
-        ? rawJob.driverCompletedAt || rawJob.completedAt || rawJob.endedAt || rawJob.actualEndTime
-        : null);
-    const isCompleted = aState.isCompleted || (jobOverallState.isCompleted && !aState.isInProgress) || Boolean(completedAt);
-    const isInProgress = !isCompleted && (aState.isInProgress || jobOverallState.isInProgress || Boolean(startedAt));
+      (hasOwnStatus ? null : (rawJob.driverCompletedAt || rawJob.completedAt || rawJob.actualEndTime)) ||
+      null;
+    const isCompleted = aState.isCompleted || Boolean(completedAt);
+    const isInProgress = !isCompleted && (aState.isInProgress || (Boolean(startedAt) && !aState.isCompleted));
     const isPending = !isCompleted && !isInProgress;
 
     const showDriverPrice = isDriverPriceVisible(matchedAssignment, rawJob);
@@ -517,14 +620,19 @@ export const normalizeMyDriverAssignment = (rawJob = {}, currentUser = null) => 
   const isExplicitMultiDriverJob =
     Array.isArray(rawAssignedDrivers) && rawAssignedDrivers.length > 0;
 
-  const jobDriverId = getDriverId(rawJob.assignedDriver || rawJob.driver || rawJob.driverId);
+  const jobDriverIds = getAssignmentDriverIds({
+    driver: rawJob.assignedDriver || rawJob.driver,
+    driverId: rawJob.driverId,
+    userId: rawJob.userId,
+  });
+  const jobDriverId = jobDriverIds[0] || "";
   const isDriverMatch =
-    !currentId ||
-    !jobDriverId ||
-    jobDriverId === currentId ||
-    !isExplicitMultiDriverJob;
+    !isExplicitMultiDriverJob &&
+    (jobDriverIds.length > 0
+      ? jobDriverIds.some((id) => currentIds.has(id))
+      : !requireDriverMatch);
 
-  if (isDriverMatch && !isExplicitMultiDriverJob) {
+  if (isDriverMatch) {
     const startedAt =
       rawJob.driverStartedAt ||
       rawJob.startedAt ||
@@ -602,35 +710,7 @@ export const normalizeMyDriverAssignment = (rawJob = {}, currentUser = null) => 
   }
 
   // 4. Current driver is NOT assigned to this job
-  return {
-    isAssigned: false,
-    assignmentId: null,
-    driverId: currentId,
-    driverName: currentUser?.name || "Driver",
-    assignedAt: null,
-    status: "unassigned",
-    isPending: false,
-    isInProgress: false,
-    isCompleted: false,
-    startedAt: null,
-    completedAt: null,
-    totalWorkedMinutes: null,
-    role: "none",
-    isPrimary: false,
-    startAgreement: null,
-    canStartWork: false,
-    canEndWork: false,
-    canCompleteJob: false,
-    pricing: null,
-    pricingSnapshot: null,
-    hourlyRate: null,
-    baseHours: null,
-    driverPrice: null,
-    driverDisplayPrice: null,
-    driverPriceType: "full",
-    showDriverPrice: false,
-    finalDriverAmount: null,
-  };
+  return createUnassignedAssignment(currentUser);
 };
 
 /**
@@ -659,35 +739,62 @@ export const getJobTypeInfo = (job = {}) => {
   };
 };
 
+export const OPERATIONAL_TIMEZONE = "Australia/Sydney";
+
+/**
+ * Extracts [year, month, day] in Australia/Sydney operational timezone.
+ * Preserves calendar dates for date-only formats while converting UTC timestamps.
+ */
+export const getSydneyDateParts = (value) => {
+  if (!value) return null;
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    // Pure date-only string: YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      const [y, m, d] = trimmed.split("-").map(Number);
+      return [y, m, d];
+    }
+    // Date with UTC midnight: YYYY-MM-DDTHH:mm:ss.sssZ where time is 00:00:00
+    if (/^\d{4}-\d{2}-\d{2}T00:00:00(\.000)?Z?$/.test(trimmed)) {
+      const [y, m, d] = trimmed.slice(0, 10).split("-").map(Number);
+      return [y, m, d];
+    }
+  }
+
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+
+  try {
+    const formatter = new Intl.DateTimeFormat("en-AU", {
+      timeZone: OPERATIONAL_TIMEZONE,
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+    });
+    const parts = formatter.formatToParts(d);
+    const partMap = {};
+    for (const p of parts) partMap[p.type] = p.value;
+    return [Number(partMap.year), Number(partMap.month), Number(partMap.day)];
+  } catch (err) {
+    return [d.getFullYear(), d.getMonth() + 1, d.getDate()];
+  }
+};
+
 /**
  * Formats a Date object or string to "25 September 2026" or "25 Sep 2026".
- * Handles pure YYYY-MM-DD date strings without timezone shifts.
+ * Preserves scheduled calendar date in Australia/Sydney operational timezone.
  */
 export const formatJobDate = (value, shortMonth = false) => {
   if (!value) return "--";
 
   try {
-    if (typeof value === "string") {
-      const match = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
-      if (match) {
-        const year = parseInt(match[1], 10);
-        const month = parseInt(match[2], 10) - 1;
-        const day = parseInt(match[3], 10);
-        const d = new Date(year, month, day);
-        return d.toLocaleDateString("en-AU", {
-          day: "numeric",
-          month: shortMonth ? "short" : "long",
-          year: "numeric",
-        });
-      }
-    }
+    const parts = getSydneyDateParts(value);
+    if (!parts) return "--";
 
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-      return "--";
-    }
-
-    return date.toLocaleDateString("en-AU", {
+    const [year, month, day] = parts;
+    const d = new Date(year, month - 1, day);
+    return d.toLocaleDateString("en-AU", {
       day: "numeric",
       month: shortMonth ? "short" : "long",
       year: "numeric",
@@ -698,7 +805,88 @@ export const formatJobDate = (value, shortMonth = false) => {
 };
 
 /**
- * Formats ISO timestamps or time strings to 12-hour AM/PM string (e.g., "09:18 AM").
+ * Validates whether a job is scheduled for a given date in the operational timezone (Australia/Sydney).
+ * Automatically includes active in-progress jobs spanning midnight or overnight.
+ */
+export const isJobScheduledOnDate = (
+  job,
+  date = new Date(),
+  { includeActiveInProgress = true } = {}
+) => {
+  if (!job || typeof job !== "object") return false;
+
+  // Active in-progress jobs (started, intransit, arrived) spanning midnight remain visible on today's dashboard
+  if (includeActiveInProgress) {
+    const state = getJobState(job);
+    if (state.isInProgress) {
+      return true;
+    }
+  }
+
+  const raw = job.raw || job;
+  const scheduledDate =
+    job.scheduledDate ??
+    raw.scheduledDate ??
+    job.scheduledAt ??
+    raw.scheduledAt ??
+    job.scheduledDateTime ??
+    raw.scheduledDateTime ??
+    job.date ??
+    raw.date ??
+    job.bookingDate ??
+    raw.bookingDate ??
+    job.serviceDate ??
+    raw.serviceDate ??
+    job.pickupDate ??
+    raw.pickupDate ??
+    job.scheduleDate ??
+    raw.scheduleDate;
+
+  if (!scheduledDate) return false;
+
+  const scheduledParts = getSydneyDateParts(scheduledDate);
+  const targetParts = getSydneyDateParts(date);
+
+  if (
+    scheduledParts &&
+    targetParts &&
+    scheduledParts.every((part, index) => part === targetParts[index])
+  ) {
+    return true;
+  }
+
+  try {
+    const d = scheduledDate instanceof Date ? scheduledDate : new Date(scheduledDate);
+    if (!Number.isNaN(d.getTime())) {
+      const localTarget = [date.getFullYear(), date.getMonth() + 1, date.getDate()];
+      const localScheduled = [d.getFullYear(), d.getMonth() + 1, d.getDate()];
+      if (localScheduled.every((part, index) => part === localTarget[index])) {
+        return true;
+      }
+      const utcTarget = [date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate()];
+      const utcScheduled = [d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate()];
+      if (utcScheduled.every((part, index) => part === utcTarget[index])) {
+        return true;
+      }
+    }
+  } catch (e) {}
+
+  return false;
+};
+
+export const formatCurrency = (value) => {
+  const amount = Number(value);
+
+  if (!Number.isFinite(amount)) {
+    return null;
+  }
+
+  return `$${amount.toFixed(2)}`;
+};
+
+/**
+ * Formats ISO timestamps or time strings to 12-hour AM/PM string (e.g., "09:18 AM")
+ * in Australia/Sydney operational timezone.
  */
 export const formatJobTime = (value) => {
   if (!value) return "--";
@@ -715,11 +903,20 @@ export const formatJobTime = (value) => {
     return typeof value === "string" && value.trim() ? value.trim() : "--";
   }
 
-  return date.toLocaleTimeString("en-AU", {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
+  try {
+    return date.toLocaleTimeString("en-AU", {
+      timeZone: OPERATIONAL_TIMEZONE,
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  } catch (e) {
+    return date.toLocaleTimeString("en-AU", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  }
 };
 
 /**
@@ -1010,19 +1207,6 @@ export const normalizeJob = (raw = {}, currentUser = null) => {
   const driverDisplayPrice = priceInfo.driverPrice;
   const driverPrice = priceInfo.driverPrice;
   const finalDriverAmount = priceInfo.earnings?.finalDriverAmount ?? priceInfo.driverPrice;
-
-  if (__DEV__) {
-    console.log("[PRICE DEBUG]", {
-      jobNumber: raw?.jobNumber || raw?.jobReference || raw?.referenceNumber || raw?._id,
-      showDriverPrice: raw?.showDriverPrice ?? raw?.showPriceToDriver ?? raw?.pricing?.showDriverPrice,
-      driverPriceType: raw?.driverPriceType ?? raw?.pricingType ?? raw?.pricing?.pricingType,
-      driverPrice: raw?.driverPrice ?? raw?.pricing?.driverPrice,
-      driverDisplayPrice: raw?.driverDisplayPrice,
-      totalAmount: raw?.totalAmount,
-      billing: raw?.billing,
-      normalizedPrice: driverDisplayPrice,
-    });
-  }
 
   const startedAt =
     raw.startedAt ??
@@ -1929,12 +2113,15 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
     formattedHourlyRate: hourlyRate > 0 ? `$${hourlyRate.toFixed(2)}/hr` : null,
 
     baseHours,
+    minimumDuration: baseHours,
     minimumDurationMinutes,
     formattedBaseDuration: formatBaseHoursLabel(baseHours),
+    formattedMinimumDuration: formatBaseHoursLabel(baseHours),
 
     baseAmount,
     minimumCost: baseAmount,
     formattedBaseAmount: `$${baseAmount.toFixed(2)}`,
+    formattedMinimumCost: `$${baseAmount.toFixed(2)}`,
 
     calloutFee,
     formattedCalloutFee: `$${calloutFee.toFixed(2)}`,
@@ -1950,8 +2137,10 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
 
     initialTotal,
     estimatedTotal: initialTotal,
+    totalEstimatedCost: initialTotal,
     formattedInitialTotal: `$${initialTotal.toFixed(2)}`,
     formattedEstimatedTotal: `$${initialTotal.toFixed(2)}`,
+    formattedTotalEstimatedCost: `$${initialTotal.toFixed(2)}`,
 
     workedMinutes: actualWorkedMinutes,
     totalWorkedMinutes: actualWorkedMinutes,
@@ -1981,17 +2170,6 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
     displayFinalPrice: `$${finalTotal.toFixed(2)}`,
   };
 
-  console.log("[PRICING DEBUG]", {
-    estimatedTotal: summary.estimatedTotal,
-    minimumDurationMinutes: summary.minimumDurationMinutes,
-    actualWorkedMinutes: summary.actualWorkedMinutes,
-    extraMinutes: summary.extraMinutes,
-    hourlyRate: summary.hourlyRate,
-    overtimeAmount: summary.overtimeAmount,
-    finalAmount: summary.finalAmount,
-    amountToCollect: summary.amountToCollect,
-  });
-
   return summary;
 };
 
@@ -2015,12 +2193,15 @@ export const calculateDriverHourlyEarnings = (myAssignment = {}, job = {}) => {
     formattedHourlyRate: summary.formattedHourlyRate,
 
     baseHours: summary.baseHours,
+    minimumDuration: summary.minimumDuration,
     minimumDurationMinutes: summary.minimumDurationMinutes,
     formattedBaseDuration: summary.formattedBaseDuration,
+    formattedMinimumDuration: summary.formattedMinimumDuration,
 
     baseAmount: summary.baseAmount,
     minimumCost: summary.baseAmount,
     formattedBaseAmount: summary.formattedBaseAmount,
+    formattedMinimumCost: summary.formattedMinimumCost,
 
     calloutFee: summary.calloutFee,
     formattedCalloutFee: summary.formattedCalloutFee,
@@ -2036,8 +2217,10 @@ export const calculateDriverHourlyEarnings = (myAssignment = {}, job = {}) => {
 
     initialTotal: summary.initialTotal,
     estimatedTotal: summary.estimatedTotal,
+    totalEstimatedCost: summary.totalEstimatedCost,
     formattedInitialTotal: summary.formattedInitialTotal,
     formattedEstimatedTotal: summary.formattedEstimatedTotal,
+    formattedTotalEstimatedCost: summary.formattedTotalEstimatedCost,
 
     extraMinutes: summary.extraMinutes,
     overtimeMinutes: summary.overtimeMinutes,
@@ -2095,3 +2278,5 @@ export const getDriverVisiblePriceInfo = (job = {}, myAssignment = null) => {
   };
 };
 
+export const getDriverVisiblePrice = (job = {}, myAssignment = null) =>
+  getDriverVisiblePriceInfo(job, myAssignment).driverPrice;

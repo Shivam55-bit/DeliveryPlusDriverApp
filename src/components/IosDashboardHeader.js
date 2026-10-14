@@ -35,39 +35,44 @@ const COLORS = {
   border: "#EAEFF6",
 };
 
+const OPERATIONAL_TIMEZONE = "Australia/Sydney";
+
 const getGreeting = () => {
-  const hour = new Date().getHours();
-  if (hour < 12) return "Good morning";
-  if (hour < 17) return "Good afternoon";
-  return "Good evening";
+  try {
+    const formatter = new Intl.DateTimeFormat("en-AU", {
+      timeZone: OPERATIONAL_TIMEZONE,
+      hour: "numeric",
+      hour12: false,
+    });
+    const hour = parseInt(formatter.format(new Date()), 10);
+    if (hour < 12) return "Good morning";
+    if (hour < 17) return "Good afternoon";
+    return "Good evening";
+  } catch (e) {
+    const hour = new Date().getHours();
+    if (hour < 12) return "Good morning";
+    if (hour < 17) return "Good afternoon";
+    return "Good evening";
+  }
 };
 
 const getDateLabel = () => {
-  const now = new Date();
-  const days = [
-    "Sunday",
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-  ];
-  const months = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-  ];
-  return `${days[now.getDay()]} ${now.getDate()} ${months[now.getMonth()]}`;
+  try {
+    const now = new Date();
+    return now.toLocaleDateString("en-AU", {
+      timeZone: OPERATIONAL_TIMEZONE,
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+    });
+  } catch (e) {
+    const now = new Date();
+    return now.toLocaleDateString("en-AU", {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+    });
+  }
 };
 
 const StatCard = memo(({ icon, value, label, accent, backgroundColor }) => (
@@ -95,6 +100,7 @@ const IosDashboardHeader = memo(
     onToggleOnline,
     onOpenNotifications,
     onViewAll,
+    sectionTitle = "Today's Jobs",
   }) => {
     const insets = useSafeAreaInsets();
 
@@ -278,7 +284,7 @@ const IosDashboardHeader = memo(
         <View style={styles.sectionHeader}>
           <View>
             <Text style={styles.sectionEyebrow}>YOUR SCHEDULE</Text>
-            <Text style={styles.sectionTitle}>Today's Jobs</Text>
+            <Text style={styles.sectionTitle}>{sectionTitle}</Text>
           </View>
 
           <TouchableOpacity

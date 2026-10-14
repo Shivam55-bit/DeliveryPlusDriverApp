@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -20,6 +20,11 @@ import Ionicons from "react-native-vector-icons/Ionicons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import API, { getAuthToken, getStoredUser } from "../services/api";
+import { invalidateDriverJobsCache } from "../services/driverJobs";
+import {
+  sendFinalDriverLocation,
+  setDriverActiveJobTracking,
+} from "../services/locationTrackingService";
 import {
   extractPaymentProofUrl,
   getSafeUploadLog,
@@ -121,7 +126,7 @@ export default function CompleteJobScreen({ navigation, route }) {
     if (route?.params?.job && !currentJob?._id && !currentJob?.backendId) {
       setCurrentJob(route.params.job);
     }
-  }, [route?.params]);
+  }, [route?.params, currentJob?._id, currentJob?.backendId]);
 
   // 1. Damage Option State
   const [hasDamage, setHasDamage] = useState(false); // false = No Damage, true = Damage Reported
@@ -154,6 +159,7 @@ export default function CompleteJobScreen({ navigation, route }) {
   const [paymentProofPhoto, setPaymentProofPhoto] = useState(null);
 
   const [loading, setLoading] = useState(false);
+  const submittingRef = useRef(false);
 
   // Helper to upload single photo
   const uploadSinglePhoto = async (photo, currentJobId) => {
@@ -360,23 +366,24 @@ export default function CompleteJobScreen({ navigation, route }) {
       return;
     }
 
+    if (submittingRef.current || loading) {
+      return;
+    }
+    submittingRef.current = true;
     setLoading(true);
 
     try {
-      // 1. Upload Damage Photos
-      let uploadedDamagePhotoUrls = [];
-      if (hasDamage && damagePhotos.length > 0) {
-        for (const photo of damagePhotos) {
-          const url = await uploadSinglePhoto(photo, targetJobId);
-          if (url) uploadedDamagePhotoUrls.push(url);
-        }
-      }
-
-      // 2. Upload Payment Proof Photo
-      let paymentProofUrl = undefined;
-      if (paymentProofPhoto) {
-        paymentProofUrl = await uploadSinglePhoto(paymentProofPhoto, targetJobId);
-      }
+      // 1 & 2. Upload Damage Photos and Payment Proof in parallel with Promise.all
+      const [uploadedDamagePhotoUrls, paymentProofUrl] = await Promise.all([
+        hasDamage && damagePhotos.length > 0
+          ? Promise.all(damagePhotos.map((photo) => uploadSinglePhoto(photo, targetJobId))).then(
+              (urls) => urls.filter(Boolean)
+            )
+          : Promise.resolve([]),
+        paymentProofPhoto
+          ? uploadSinglePhoto(paymentProofPhoto, targetJobId)
+          : Promise.resolve(undefined),
+      ]);
 
       // 3. Construct Complete Job Payload
       const parsedAmount = parseFloat(amountReceived);
@@ -404,11 +411,14 @@ export default function CompleteJobScreen({ navigation, route }) {
           : "Completed smoothly with No Damage",
       };
 
-      console.log("[JobComplete] Submitting payload:", JSON.stringify(payload, null, 2));
-
+      await sendFinalDriverLocation();
       await API.post(`/jobs/${targetJobId}/complete`, payload);
+      invalidateDriverJobsCache();
+      setDriverActiveJobTracking(false).catch(() => {
+        console.warn("[LOCATION_WATCH_STARTED] idle interval update failed");
+      });
 
-      // Immediately fetch fresh authoritative completed job data from backend
+      // Fetch fresh completed job asynchronously in background
       try {
         const user = await getStoredUser();
         const refreshRes = await API.get(`/jobs/${targetJobId}`);
@@ -440,6 +450,7 @@ export default function CompleteJobScreen({ navigation, route }) {
         "Failed to complete job. Please try again.";
       Alert.alert("Submission Failed", errMsg);
     } finally {
+      submittingRef.current = false;
       setLoading(false);
     }
   };
@@ -1006,7 +1017,7 @@ export default function CompleteJobScreen({ navigation, route }) {
           style={[styles.submitBtnWrapper, loading && styles.submitBtnDisabled]}
           onPress={handleSubmitComplete}
           disabled={loading}
-          activeOpacity={0.88}
+          activeOpacity={0.7}
         >
           <LinearGradient
             colors={["#0098FF", "#00C6FF"]}

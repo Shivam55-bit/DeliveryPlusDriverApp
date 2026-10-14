@@ -16,7 +16,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import API, { clearAuthToken, getStoredUser } from "../services/api";
+import API, { clearAuthToken, getStoredUser, getCurrentUser } from "../services/api";
+import { getCachedJob } from "../services/driverJobs";
 import LoadingSpinner from "../components/LoadingSpinner";
 import AppIcon from "../components/common/AppIcon";
 import {
@@ -32,22 +33,44 @@ import {
   openMap,
 } from "../utils/jobHelpers";
 
+const LiveJobTimerBanner = React.memo(({ startedAt, isRunning }) => {
+  const seconds = useElapsedTime(startedAt, isRunning);
+  return (
+    <View style={styles.liveTimerBanner}>
+      <View style={styles.liveTimerLeft}>
+        <View style={styles.pulseDot} />
+        <Text style={styles.liveTimerTitle}>My Live Job Time</Text>
+      </View>
+      <Text style={styles.liveTimerClock}>
+        {formatLiveTimer(seconds)}
+      </Text>
+    </View>
+  );
+});
+
 export default function JobDetailScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
-  const [currentUser, setCurrentUser] = useState(null);
-  const [job, setJob] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const scrollViewRef = useRef(null);
-
   const routeParams = route?.params;
-  const rawParam = useMemo(() => routeParams?.job || null, [routeParams]);
+  const rawParam = routeParams?.job || null;
   const jobId =
     routeParams?.jobId ||
     routeParams?.id ||
     rawParam?._id ||
     rawParam?.backendId ||
     rawParam?.id;
+
+  const [currentUser, setCurrentUser] = useState(() => getCurrentUser());
+  const [job, setJob] = useState(() => {
+    if (rawParam) return normalizeJob(rawParam, getCurrentUser());
+    if (jobId) {
+      const cached = getCachedJob(jobId);
+      if (cached) return normalizeJob(cached, getCurrentUser());
+    }
+    return null;
+  });
+  const [loading, setLoading] = useState(() => !job);
+  const [refreshing, setRefreshing] = useState(false);
+  const scrollViewRef = useRef(null);
 
   const jobState = getJobState(job) || {};
   const myAssignment = useMemo(() => {
@@ -72,7 +95,6 @@ export default function JobDetailScreen({ route, navigation }) {
   const isMyWorkInProgress = Boolean(
     myAssignment?.isInProgress && myAssignment?.startedAt && !myAssignment?.completedAt
   );
-  const elapsedTimeSeconds = useElapsedTime(myAssignment?.startedAt, isMyWorkInProgress);
 
   const fetchJobDetails = useCallback(async (isManualRefresh = false) => {
     let user = currentUser;
@@ -629,15 +651,10 @@ export default function JobDetailScreen({ route, navigation }) {
                 </Text>
               </View>
             ) : isMyWorkInProgress ? (
-              <View style={styles.liveTimerBanner}>
-                <View style={styles.liveTimerLeft}>
-                  <View style={styles.pulseDot} />
-                  <Text style={styles.liveTimerTitle}>My Live Job Time</Text>
-                </View>
-                <Text style={styles.liveTimerClock}>
-                  {formatLiveTimer(elapsedTimeSeconds)}
-                </Text>
-              </View>
+              <LiveJobTimerBanner
+                startedAt={myAssignment?.startedAt}
+                isRunning={isMyWorkInProgress}
+              />
             ) : (
               <View style={styles.notStartedBanner}>
                 <AppIcon
@@ -924,7 +941,7 @@ export default function JobDetailScreen({ route, navigation }) {
               <TouchableOpacity
                 style={styles.primaryActionBtn}
                 onPress={handleStartJob}
-                activeOpacity={0.8}
+                activeOpacity={0.7}
               >
                 <AppIcon library="Ionicons" name="play-sharp" size={20} color="#FFF" />
                 <Text style={styles.primaryActionText}>Start Job</Text>
@@ -935,7 +952,7 @@ export default function JobDetailScreen({ route, navigation }) {
               <TouchableOpacity
                 style={[styles.primaryActionBtn, styles.endJobBtn]}
                 onPress={handleEndJob}
-                activeOpacity={0.8}
+                activeOpacity={0.7}
               >
                 <AppIcon library="Ionicons" name="checkmark-done-sharp" size={20} color="#FFF" />
                 <Text style={styles.primaryActionText}>End Job & Complete</Text>

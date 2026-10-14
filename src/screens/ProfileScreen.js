@@ -20,6 +20,7 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import {
   SafeAreaView,
   useSafeAreaInsets,
@@ -32,6 +33,9 @@ import API, {
   clearAuthToken,
   getAuthToken,
 } from "../services/api";
+import {
+  fetchAuthenticatedDriverProfile,
+} from "../services/driverProfile";
 
 const PALETTE = {
   background: "#F3F6FB",
@@ -51,24 +55,49 @@ const PALETTE = {
   white: "#FFFFFF",
 };
 
-const safeArray = (value) =>
-  Array.isArray(value) ? value : [];
+const extractJobs = (value) => {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.jobs)) return value.jobs;
+  if (Array.isArray(value?.data?.jobs)) return value.data.jobs;
+  if (Array.isArray(value?.data)) return value.data;
+  return null;
+};
 
 const getInitial = (name) =>
-  String(name || "D")
+  String(name === "Name not provided" ? "D" : name || "D")
     .trim()
     .charAt(0)
     .toUpperCase() || "D";
 
-const maskDriverId = (value) => {
+const formatDriverId = (value) => {
   if (!value) return "Driver ID: Not available";
 
-  const id = String(value);
-  return `Driver ID: •••${id.slice(-6).toUpperCase()}`;
+  const clean = String(value).trim();
+  if (
+    !clean ||
+    clean.toLowerCase() === "null" ||
+    clean.toLowerCase() === "undefined" ||
+    clean.toLowerCase() === "not available"
+  ) {
+    return "Driver ID: Not available";
+  }
+
+  if (/^driver\s*id/i.test(clean)) {
+    return clean;
+  }
+  if (/^id[:\s]/i.test(clean)) {
+    return `Driver ${clean}`;
+  }
+
+  if (/^[0-9a-fA-F]{24}$/.test(clean)) {
+    return `Driver ID: #${clean.slice(-6).toUpperCase()}`;
+  }
+
+  return `Driver ID: ${clean}`;
 };
 
 const normaliseAvatarUrl = (avatar) => {
-  if (!avatar) return null;
+  if (typeof avatar !== "string" || !avatar) return null;
   if (/^https?:\/\//i.test(avatar)) return avatar;
 
   const baseURL = String(API?.defaults?.baseURL || "").replace(
@@ -105,32 +134,6 @@ const ProfileStat = memo(
   )
 );
 
-const QuickAction = memo(
-  ({ icon, label, color, backgroundColor, onPress }) => (
-    <TouchableOpacity
-      style={styles.quickAction}
-      activeOpacity={0.82}
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-    >
-      <View
-        style={[
-          styles.quickActionIcon,
-          { backgroundColor },
-        ]}
-      >
-        <AppIcon
-          library="MaterialCommunityIcons"
-          name={icon}
-          size={23}
-          color={color}
-        />
-      </View>
-      <Text style={styles.quickActionLabel}>{label}</Text>
-    </TouchableOpacity>
-  )
-);
 
 const MenuRow = memo(
   ({
@@ -203,114 +206,121 @@ export default function ProfileScreen({ navigation }) {
   const heroTranslateY = useRef(
     new Animated.Value(14)
   ).current;
+  const profileRequestId = useRef(0);
+  const profileAbortController = useRef(null);
 
-  const [profileData, setProfileData] = useState({
-    name: "Driver",
-    email: "Not available",
-    phone: "Not available",
-    vehicle: null,
-    profileImage: null,
-    userId: "Driver ID: Not available",
-    isVerified: false,
-    isApproved: false,
-    rating: 0,
-  });
+  const [profileData, setProfileData] = useState(null);
 
   const [stats, setStats] = useState({
-    assigned: 0,
-    completed: 0,
-    rating: 0,
+    assigned: null,
+    completed: null,
+    rating: null,
   });
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [profileImageFailed, setProfileImageFailed] = useState(false);
   const [deletingAccount, setDeletingAccount] =
     useState(false);
 
   const fetchProfileData = useCallback(
     async ({ silent = false } = {}) => {
+      profileAbortController.current?.abort();
+      const controller = new AbortController();
+      profileAbortController.current = controller;
+      const requestId = ++profileRequestId.current;
       if (!silent) setLoading(true);
+      setLoadError("");
 
       try {
-        const [profileRes, completedRes, assignedRes] =
-          await Promise.all([
-            API.get("/auth/me"),
-            API.get(
-              "/jobs/driver/my-jobs?status=completed"
-            ),
-            API.get(
-              "/jobs/driver/my-jobs?status=upcoming"
-            ),
-          ]);
-
-        const user =
-          profileRes?.user ??
-          profileRes?.data?.user ??
-          profileRes?.data ??
-          null;
-
-        if (!user) {
-          throw new Error("Profile data not found");
-        }
-
-        const completedJobs = safeArray(
-          completedRes?.jobs ??
-            completedRes?.data?.jobs ??
-            completedRes?.data
+        const completedJobsRequest = API.get(
+          "/jobs/driver/my-jobs?status=completed",
+          { timeout: 15000, signal: controller.signal }
         );
-
-        const assignedJobs = safeArray(
-          assignedRes?.jobs ??
-            assignedRes?.data?.jobs ??
-            assignedRes?.data
+        const assignedJobsRequest = API.get(
+          "/jobs/driver/my-jobs?status=upcoming",
+          { timeout: 15000, signal: controller.signal }
         );
+        const statsRequest = Promise.allSettled([
+          completedJobsRequest,
+          assignedJobsRequest,
+        ]);
 
-        const rating = Number(user?.rating) || 0;
-
-        setProfileData({
-          name: user?.name || "Driver",
-          email: user?.email || "Not available",
-          phone: user?.phone || "Not available",
-          vehicle: user?.vehicle || null,
-          profileImage: normaliseAvatarUrl(
-            user?.avatar ?? user?.profileImage
-          ),
-          userId: maskDriverId(user?._id ?? user?.id),
-          isVerified: Boolean(
-            user?.isVerified ??
-              user?.documentsVerified ??
-              user?.verificationStatus === "verified"
-          ),
-          isApproved: Boolean(
-            user?.isApproved ?? user?.status === "approved"
-          ),
-          rating,
+        const profile = await fetchAuthenticatedDriverProfile({
+          signal: controller.signal,
         });
+        if (requestId !== profileRequestId.current) return;
 
-        setStats({
-          assigned: assignedJobs.length,
-          completed: completedJobs.length,
-          rating,
-        });
-      } catch (error) {
-        console.log(
-          "Profile fetch error:",
-          error?.response?.data ?? error?.message
-        );
+        profile.profileImage = normaliseAvatarUrl(profile.profileImage);
+        setProfileData(profile);
+        setProfileImageFailed(false);
+        setStats((current) => ({
+          ...current,
+          rating: profile.rating,
+        }));
+        setLoading(false);
 
-        if (!silent) {
-          Alert.alert(
-            "Profile unavailable",
-            error?.response?.data?.message ||
-              "Failed to load profile. Please try again."
+        const [completedResult, assignedResult] = await statsRequest;
+        if (requestId !== profileRequestId.current) return;
+
+        const completedJobs =
+          completedResult.status === "fulfilled"
+            ? extractJobs(completedResult.value)
+            : null;
+        const assignedJobs =
+          assignedResult.status === "fulfilled"
+            ? extractJobs(assignedResult.value)
+            : null;
+
+        if (!completedJobs) {
+          console.warn(
+            "[Profile] Completed jobs response was unavailable or invalid.",
+            completedResult.status === "rejected"
+              ? completedResult.reason?.message
+              : "Unrecognized response shape"
           );
         }
+        if (!assignedJobs) {
+          console.warn(
+            "[Profile] Assigned jobs response was unavailable or invalid.",
+            assignedResult.status === "rejected"
+              ? assignedResult.reason?.message
+              : "Unrecognized response shape"
+          );
+        }
+
+        setStats({
+          assigned: assignedJobs?.length ?? null,
+          completed: completedJobs?.length ?? null,
+          rating: profile.rating,
+        });
+      } catch (error) {
+        if (requestId !== profileRequestId.current) return;
+
+        const message =
+          error?.response?.data?.message ||
+          error?.message ||
+          "Unable to load your profile. Please try again.";
+        setLoadError(message);
+
+        if (error?.response?.status === 401) {
+          await clearAuthToken();
+          const rootNavigation = navigation.getParent() || navigation;
+          rootNavigation.reset({
+            index: 0,
+            routes: [{ name: "Login" }],
+          });
+        }
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        if (requestId === profileRequestId.current) {
+          profileAbortController.current = null;
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
-    []
+    [navigation]
   );
 
   useEffect(() => {
@@ -328,14 +338,31 @@ export default function ProfileScreen({ navigation }) {
         useNativeDriver: true,
       }),
     ]).start();
+  }, [heroOpacity, heroTranslateY]);
 
-    fetchProfileData();
-  }, [fetchProfileData, heroOpacity, heroTranslateY]);
+  useFocusEffect(
+    useCallback(() => {
+      fetchProfileData();
+
+      return () => {
+        profileAbortController.current?.abort();
+        profileRequestId.current += 1;
+      };
+    }, [fetchProfileData])
+  );
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
     fetchProfileData({ silent: true });
   }, [fetchProfileData]);
+
+  const resetToLogin = useCallback(() => {
+    const rootNavigation = navigation.getParent() || navigation;
+    rootNavigation.reset({
+      index: 0,
+      routes: [{ name: "Login" }],
+    });
+  }, [navigation]);
 
   const handleLogout = useCallback(() => {
     Alert.alert(
@@ -347,16 +374,13 @@ export default function ProfileScreen({ navigation }) {
           text: "Log out",
           style: "destructive",
           onPress: async () => {
-            await Promise.resolve(clearAuthToken());
-            navigation.reset({
-              index: 0,
-              routes: [{ name: "Login" }],
-            });
+            await clearAuthToken();
+            resetToLogin();
           },
         },
       ]
     );
-  }, [navigation]);
+  }, [resetToLogin]);
 
   const performDeleteAccount = useCallback(async () => {
     if (deletingAccount) return;
@@ -367,11 +391,8 @@ export default function ProfileScreen({ navigation }) {
       const token = await Promise.resolve(getAuthToken());
 
       if (!token) {
-        await Promise.resolve(clearAuthToken());
-        navigation.reset({
-          index: 0,
-          routes: [{ name: "Login" }],
-        });
+        await clearAuthToken();
+        resetToLogin();
         return;
       }
 
@@ -398,10 +419,7 @@ export default function ProfileScreen({ navigation }) {
         "Your account has been permanently deleted."
       );
 
-      navigation.reset({
-        index: 0,
-        routes: [{ name: "Login" }],
-      });
+      resetToLogin();
     } catch (error) {
       Alert.alert(
         "Unable to delete account",
@@ -411,7 +429,7 @@ export default function ProfileScreen({ navigation }) {
     } finally {
       setDeletingAccount(false);
     }
-  }, [deletingAccount, navigation]);
+  }, [deletingAccount, resetToLogin]);
 
   const handleDeleteAccount = useCallback(() => {
     if (deletingAccount) return;
@@ -430,40 +448,40 @@ export default function ProfileScreen({ navigation }) {
     );
   }, [deletingAccount, performDeleteAccount]);
 
-  const performanceRating = useMemo(
-    () =>
-      stats.rating > 0
-        ? stats.rating.toFixed(1)
-        : "—",
-    [stats.rating]
-  );
 
   const vehicleTitle = useMemo(() => {
-    if (!profileData.vehicle) return "No vehicle assigned";
+    const vehicle = profileData?.vehicle;
+    if (!vehicle) return "No vehicle assigned";
 
     return (
-      profileData.vehicle.number ??
-      profileData.vehicle.registrationNumber ??
-      profileData.vehicle.plateNumber ??
+      vehicle.number ??
+      vehicle.vehicleNumber ??
+      vehicle.registrationNumber ??
+      vehicle.plateNumber ??
+      vehicle.licensePlate ??
       "Vehicle assigned"
     );
-  }, [profileData.vehicle]);
+  }, [profileData?.vehicle]);
 
   const vehicleSubtitle = useMemo(() => {
-    if (!profileData.vehicle) {
+    const vehicle = profileData?.vehicle;
+    if (!vehicle) {
       return "Contact admin to assign a vehicle";
     }
 
     const vehicleType =
-      profileData.vehicle.type ??
-      profileData.vehicle.vehicleType ??
-      "Vehicle";
+      vehicle.type ??
+      vehicle.vehicleType ??
+      vehicle.model ??
+      "Vehicle details unavailable";
 
     const status =
-      profileData.vehicle.status ?? "Active";
+      vehicle.status ??
+      vehicle.verificationStatus ??
+      "Status unavailable";
 
     return `${vehicleType} • ${status}`;
-  }, [profileData.vehicle]);
+  }, [profileData?.vehicle]);
 
   if (loading) {
     return (
@@ -473,6 +491,45 @@ export default function ProfileScreen({ navigation }) {
       />
     );
   }
+
+  if (!profileData) {
+    return (
+      <SafeAreaView style={styles.container} edges={["top"]}>
+        <StatusBar
+          barStyle="light-content"
+          backgroundColor={PALETTE.navyDeep}
+        />
+        <View style={styles.errorState}>
+          <AppIcon
+            library="MaterialCommunityIcons"
+            name="account-alert-outline"
+            size={42}
+            color={PALETTE.red}
+          />
+          <Text style={styles.errorTitle}>Profile unavailable</Text>
+          <Text style={styles.errorMessage}>
+            {loadError || "Unable to load your profile. Please try again."}
+          </Text>
+          <TouchableOpacity
+            style={styles.retryButton}
+            onPress={() => fetchProfileData()}
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading profile"
+          >
+            <Text style={styles.retryButtonText}>Try again</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+
+  const availabilityLabel =
+    profileData.isOnline === null
+      ? "Unavailable"
+      : profileData.isOnline
+        ? "Online"
+        : "Offline";
 
   return (
     <SafeAreaView
@@ -501,6 +558,20 @@ export default function ProfileScreen({ navigation }) {
           },
         ]}
       >
+        {loadError ? (
+          <View style={styles.refreshError}>
+            <Text style={styles.refreshErrorText}>
+              Could not refresh profile: {loadError}
+            </Text>
+            <TouchableOpacity
+              onPress={handleRefresh}
+              accessibilityRole="button"
+              accessibilityLabel="Retry profile refresh"
+            >
+              <Text style={styles.refreshRetryText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
         <View
           style={[
             styles.page,
@@ -543,28 +614,11 @@ export default function ProfileScreen({ navigation }) {
                       My Profile
                     </Text>
                   </View>
-
-                  <TouchableOpacity
-                    style={styles.settingsButton}
-                    onPress={() =>
-                      navigation.navigate("EditProfile")
-                    }
-                    activeOpacity={0.8}
-                    accessibilityRole="button"
-                    accessibilityLabel="Open profile settings"
-                  >
-                    <AppIcon
-                      library="Ionicons"
-                      name="settings-outline"
-                      size={20}
-                      color={PALETTE.white}
-                    />
-                  </TouchableOpacity>
                 </View>
 
                 <View style={styles.profileRow}>
                   <View style={styles.avatarWrap}>
-                    {profileData.profileImage ? (
+                    {profileData.profileImage && !profileImageFailed ? (
                       <Image
                         source={{
                           uri: profileData.profileImage,
@@ -579,6 +633,7 @@ export default function ProfileScreen({ navigation }) {
                               : 36,
                           },
                         ]}
+                        onError={() => setProfileImageFailed(true)}
                       />
                     ) : (
                       <View
@@ -638,7 +693,12 @@ export default function ProfileScreen({ navigation }) {
                       style={styles.profileId}
                       numberOfLines={1}
                     >
-                      {profileData.userId}
+                      {formatDriverId(
+                        profileData.driverId ||
+                        profileData.driverCode ||
+                        profileData.driver_id ||
+                        profileData.driverNumber
+                      )}
                     </Text>
 
                     <Text
@@ -648,26 +708,6 @@ export default function ProfileScreen({ navigation }) {
                       {profileData.email}
                     </Text>
                   </View>
-
-                  <TouchableOpacity
-                    style={styles.editButton}
-                    onPress={() =>
-                      navigation.navigate("EditProfile")
-                    }
-                    activeOpacity={0.8}
-                    accessibilityRole="button"
-                    accessibilityLabel="Edit profile"
-                  >
-                    <AppIcon
-                      library="MaterialCommunityIcons"
-                      name="account-edit-outline"
-                      size={16}
-                      color={PALETTE.white}
-                    />
-                    <Text style={styles.editButtonText}>
-                      Edit
-                    </Text>
-                  </TouchableOpacity>
                 </View>
               </View>
             </LinearGradient>
@@ -688,25 +728,57 @@ export default function ProfileScreen({ navigation }) {
             <View style={styles.statsRow}>
               <ProfileStat
                 icon="clipboard-check-outline"
-                value={stats.completed}
+                value={stats.completed ?? "—"}
                 label="Completed"
                 color={PALETTE.green}
                 backgroundColor="#E5F8F0"
               />
               <ProfileStat
                 icon="clock-outline"
-                value={stats.assigned}
+                value={stats.assigned ?? "—"}
                 label="Assigned"
                 color={PALETTE.blue}
                 backgroundColor="#E6F2FF"
               />
-              <ProfileStat
-                icon="star-outline"
-                value={performanceRating}
-                label="Rating"
-                color={PALETTE.orange}
-                backgroundColor="#FFF3DF"
-              />
+            </View>
+
+            <View style={styles.profileDetailsCard}>
+              <View style={styles.profileDetailRow}>
+                <AppIcon
+                  library="MaterialCommunityIcons"
+                  name="phone-outline"
+                  size={19}
+                  color={PALETTE.blue}
+                />
+                <Text style={styles.profileDetailLabel}>Phone</Text>
+                <Text style={styles.profileDetailValue} numberOfLines={1}>
+                  {profileData.phone}
+                </Text>
+              </View>
+              <View style={styles.profileDetailRow}>
+                <AppIcon
+                  library="MaterialCommunityIcons"
+                  name={
+                    profileData.isOnline === null
+                      ? "help-circle-outline"
+                      : profileData.isOnline
+                        ? "check-circle-outline"
+                        : "minus-circle-outline"
+                  }
+                  size={19}
+                  color={
+                    profileData.isOnline === null
+                      ? PALETTE.subtle
+                      : profileData.isOnline
+                        ? PALETTE.green
+                        : PALETTE.muted
+                  }
+                />
+                <Text style={styles.profileDetailLabel}>Availability</Text>
+                <Text style={styles.profileDetailValue}>
+                  {availabilityLabel}
+                </Text>
+              </View>
             </View>
 
             <View style={styles.sectionBlock}>
@@ -716,14 +788,17 @@ export default function ProfileScreen({ navigation }) {
                 style={styles.vehicleCard}
                 activeOpacity={0.84}
                 onPress={() =>
-                  navigation.navigate("VehicleDetails")
+                  navigation.navigate("VehicleDetails", {
+                    vehicle: profileData?.vehicle,
+                    driverName: profileData?.name,
+                  })
                 }
               >
                 <View
                   style={[
                     styles.vehicleIcon,
                     {
-                      backgroundColor: profileData.vehicle
+                      backgroundColor: profileData?.vehicle
                         ? "#E6F2FF"
                         : "#EEF1F5",
                     },
@@ -734,7 +809,7 @@ export default function ProfileScreen({ navigation }) {
                     name="truck-outline"
                     size={27}
                     color={
-                      profileData.vehicle
+                      profileData?.vehicle
                         ? PALETTE.blue
                         : PALETTE.subtle
                     }
@@ -765,108 +840,7 @@ export default function ProfileScreen({ navigation }) {
               </TouchableOpacity>
             </View>
 
-            <View style={styles.sectionBlock}>
-              <Text style={styles.sectionTitle}>
-                Quick Actions
-              </Text>
 
-              <View style={styles.quickActionsGrid}>
-                <QuickAction
-                  icon="account-edit-outline"
-                  label="Edit Profile"
-                  color={PALETTE.blue}
-                  backgroundColor="#E6F2FF"
-                  onPress={() =>
-                    navigation.navigate("EditProfile")
-                  }
-                />
-                <QuickAction
-                  icon="truck-outline"
-                  label="Vehicle"
-                  color={PALETTE.orange}
-                  backgroundColor="#FFF3DF"
-                  onPress={() =>
-                    navigation.navigate("VehicleDetails")
-                  }
-                />
-                <QuickAction
-                  icon="lock-reset"
-                  label="Password"
-                  color={PALETTE.green}
-                  backgroundColor="#E5F8F0"
-                  onPress={() =>
-                    navigation.navigate("EditProfile")
-                  }
-                />
-                <QuickAction
-                  icon="bell-outline"
-                  label="Alerts"
-                  color={PALETTE.red}
-                  backgroundColor="#FDEBED"
-                  onPress={() =>
-                    navigation.navigate("Notifications")
-                  }
-                />
-                <QuickAction
-                  icon="file-document-outline"
-                  label="Documents"
-                  color={PALETTE.purple}
-                  backgroundColor="#EFEDFF"
-                  onPress={() =>
-                    navigation.navigate("EditProfile")
-                  }
-                />
-                <QuickAction
-                  icon="help-circle-outline"
-                  label="Support"
-                  color={PALETTE.navy}
-                  backgroundColor="#E8EEF5"
-                  onPress={() =>
-                    navigation.navigate("HelpSupport")
-                  }
-                />
-              </View>
-            </View>
-
-            <View style={styles.sectionBlock}>
-              <Text style={styles.sectionTitle}>Account</Text>
-
-              <View style={styles.groupCard}>
-                <MenuRow
-                  icon="account-edit-outline"
-                  title="Edit Profile"
-                  subtitle="Update personal information"
-                  onPress={() =>
-                    navigation.navigate("EditProfile")
-                  }
-                />
-                <MenuRow
-                  icon="truck-outline"
-                  title="Vehicle Details"
-                  subtitle="View assigned vehicle"
-                  onPress={() =>
-                    navigation.navigate("VehicleDetails")
-                  }
-                />
-                <MenuRow
-                  icon="lock-reset"
-                  title="Change Password"
-                  subtitle="Secure your account"
-                  onPress={() =>
-                    navigation.navigate("EditProfile")
-                  }
-                />
-                <MenuRow
-                  icon="file-document-outline"
-                  title="Documents"
-                  subtitle="View driver documents"
-                  onPress={() =>
-                    navigation.navigate("EditProfile")
-                  }
-                  last
-                />
-              </View>
-            </View>
 
             <View style={styles.sectionBlock}>
               <Text style={styles.sectionTitle}>Support</Text>
@@ -963,6 +937,61 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
+  },
+  errorState: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 28,
+  },
+  errorTitle: {
+    color: PALETTE.text,
+    fontSize: 20,
+    fontWeight: "900",
+    marginTop: 14,
+  },
+  errorMessage: {
+    color: PALETTE.muted,
+    fontSize: 14,
+    lineHeight: 21,
+    marginTop: 8,
+    textAlign: "center",
+  },
+  retryButton: {
+    minHeight: 46,
+    minWidth: 132,
+    paddingHorizontal: 20,
+    marginTop: 20,
+    borderRadius: 15,
+    backgroundColor: PALETTE.navy,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  retryButtonText: {
+    color: PALETTE.white,
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  refreshError: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: "#FDEBED",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  refreshErrorText: {
+    flex: 1,
+    color: "#9F2630",
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  refreshRetryText: {
+    color: PALETTE.navy,
+    fontSize: 12,
+    fontWeight: "900",
   },
   page: {
     width: "100%",
@@ -1098,24 +1127,7 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     marginTop: 3,
   },
-  editButton: {
-    height: 38,
-    paddingHorizontal: 14,
-    borderRadius: 19,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.32)",
-    backgroundColor: "rgba(255, 255, 255, 0.16)",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 5,
-    flexShrink: 0,
-  },
-  editButtonText: {
-    color: PALETTE.white,
-    fontSize: 13,
-    fontWeight: "700",
-  },
+
 
   content: {
     paddingHorizontal: 16,
@@ -1144,6 +1156,37 @@ const styles = StyleSheet.create({
   statsRow: {
     flexDirection: "row",
     gap: 10,
+  },
+  profileDetailsCard: {
+    marginTop: 14,
+    paddingHorizontal: 15,
+    paddingVertical: 4,
+    borderRadius: 18,
+    backgroundColor: PALETTE.surface,
+    shadowColor: "#173A5F",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    elevation: 2,
+  },
+  profileDetailRow: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  profileDetailLabel: {
+    flex: 1,
+    color: PALETTE.muted,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  profileDetailValue: {
+    maxWidth: "56%",
+    color: PALETTE.text,
+    fontSize: 13,
+    fontWeight: "800",
+    textAlign: "right",
   },
   statCard: {
     flex: 1,
@@ -1220,30 +1263,6 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
 
-  quickActionsGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-    rowGap: 16,
-  },
-  quickAction: {
-    width: "31%",
-    alignItems: "center",
-  },
-  quickActionIcon: {
-    width: 58,
-    height: 58,
-    borderRadius: 19,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  quickActionLabel: {
-    color: PALETTE.text,
-    fontSize: 11.5,
-    fontWeight: "700",
-    textAlign: "center",
-    marginTop: 8,
-  },
 
   groupCard: {
     borderRadius: 22,

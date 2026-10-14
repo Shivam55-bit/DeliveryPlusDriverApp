@@ -1,9 +1,15 @@
 import "react-native-gesture-handler";
-import { AppRegistry } from "react-native";
+import { AppRegistry, Platform, LogBox } from "react-native";
 import * as RNFBMessaging from "@react-native-firebase/messaging";
 import notifee, { EventType } from "@notifee/react-native";
 import App from "./App";
 import { name as appName } from "./app.json";
+
+LogBox.ignoreAllLogs(true);
+
+if (Platform.OS === "android") {
+  // Native free GPS tracking is managed by the JS tracking coordinator and Android service.
+}
 
 // Firebase background message handler (supports both v26 modular and namespace APIs)
 try {
@@ -15,14 +21,38 @@ try {
         : null;
 
   const handleBackgroundPush = async (remoteMessage) => {
-    console.log("[Push] ==================== BACKGROUND PUSH RECEIVED ====================");
-    console.log("[Push] State: BACKGROUND");
-    console.log("[Push] messageId:", remoteMessage?.messageId || "N/A");
-    console.log("[Push] notification.title:", remoteMessage?.notification?.title || remoteMessage?.data?.title || "(No Title)");
-    console.log("[Push] notification.body:", remoteMessage?.notification?.body || remoteMessage?.data?.body || "(No Body)");
-    console.log("[Push] data:", JSON.stringify(remoteMessage?.data || {}));
-    console.log("[Push] sentTime:", remoteMessage?.sentTime ? new Date(remoteMessage.sentTime).toISOString() : new Date().toISOString());
-    console.log("[Push] ================================================================");
+    console.info("[Push] background notification received");
+
+    // If notification block is missing (Data-only FCM message), display local notification via Notifee
+    if (!remoteMessage?.notification && (remoteMessage?.data?.title || remoteMessage?.data?.body)) {
+      try {
+        if (typeof notifee?.displayNotification === "function") {
+          await notifee.displayNotification({
+            title: remoteMessage.data.title || "DeliveryPlus Driver",
+            body: remoteMessage.data.body || "New update received",
+            data: remoteMessage.data || {},
+            android: {
+              channelId: remoteMessage.data.channelId || "jobs_urgent",
+              importance: 4, // AndroidImportance.HIGH
+              pressAction: {
+                id: "default",
+              },
+              smallIcon: "ic_launcher",
+            },
+            ios: {
+              foregroundPresentationOptions: {
+                banner: true,
+                badge: true,
+                sound: true,
+                list: true,
+              },
+            },
+          });
+        }
+      } catch (err) {
+        console.warn("[Push] Error displaying background data-only notification:", err?.message);
+      }
+    }
   };
 
   if (messagingInstance) {
@@ -41,7 +71,7 @@ try {
   if (typeof notifee?.onBackgroundEvent === "function") {
     notifee.onBackgroundEvent(async ({ type, detail }) => {
       if (type === EventType.PRESS) {
-        console.log("[Push] Background Notifee notification pressed:", JSON.stringify(detail?.notification || {}));
+        console.info("[Push] background notification opened");
       }
     });
   }
@@ -50,5 +80,3 @@ try {
 }
 
 AppRegistry.registerComponent(appName, () => App);
-
-

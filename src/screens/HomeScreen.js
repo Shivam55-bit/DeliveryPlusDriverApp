@@ -8,11 +8,13 @@ import React, {
 } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   AppState,
   Easing,
   FlatList,
   Image,
+  Modal,
   Platform,
   RefreshControl,
   SafeAreaView,
@@ -35,8 +37,45 @@ import AppIcon from "../components/common/AppIcon";
 import LoadingSpinner from "../components/LoadingSpinner";
 import IosDashboardHeader from "../components/IosDashboardHeader";
 import JobTimerBanner from "../components/JobTimerBanner";
-import API, { getStoredUser, clearAuthToken, getAuthToken, setAuthToken } from "../services/api";
-import { getDriverVisiblePriceInfo, normalizeMyDriverAssignment } from "../utils/jobHelpers";
+import API, {
+  getStoredUser,
+  clearAuthToken,
+  getAuthToken,
+  setAuthToken,
+  tryRequest,
+} from "../services/api";
+import {
+  fetchDriverJobs,
+  getCachedDriverJobs,
+  loadPersistedDriverJobs,
+} from "../services/driverJobs";
+import {
+  requestDriverLocationPermission,
+  startDriverLocationTracking,
+  stopDriverLocationTracking,
+  stopDriverTrackingAndMarkOffline,
+} from "../services/locationTrackingService";
+import {
+  getAndroidLocationPermissionStatus,
+  getNativeLocationPermissionState,
+  openDeviceLocationSettings,
+  openLocationSettings,
+  subscribeNativeLocationAuthorization,
+} from "../services/nativeLocationService";
+import {
+  getDriverVisiblePrice,
+  normalizeMyDriverAssignment,
+  getJobPricingSummary,
+  formatCurrency,
+  isJobScheduledOnDate,
+  formatJobDate,
+} from "../utils/jobHelpers";
+import {
+  getDriverUnreadCount,
+  fetchDriverUnreadCount,
+  subscribeUnreadCount,
+  subscribeNotifications,
+} from "../services/notificationService";
 
 const logoImage = require("../assets/images/Logo.png");
 
@@ -56,6 +95,103 @@ const COLORS = {
   muted: "#71809B",
   subtle: "#A5B0C2",
   border: "#E6ECF4",
+};
+
+const DRIVER_AVAILABILITY_ENDPOINTS = [
+  "/drivers/me/availability",
+  "/drivers/me/heartbeat",
+  "/driver/me/availability",
+];
+
+const getAndroidLocationPermissionDialog = (status) => {
+  if (!status?.foregroundGranted) {
+    const permanentlyDenied = Boolean(status?.foregroundPermanentlyDenied);
+    return {
+      step: "foreground",
+      title: permanentlyDenied
+        ? "Location access is blocked"
+        : "Location permission required",
+      message: permanentlyDenied
+        ? "Enable location for DeliveryPlus in Android app settings. Approximate location is supported; precise location provides more reliable driver tracking."
+        : "DeliveryPlus uses your location while you are online so dispatch can follow active deliveries. Choose Continue to allow location while using the app. Approximate location is supported; precise is more accurate.",
+      canContinue: !permanentlyDenied,
+      canOpenSettings: permanentlyDenied,
+      settingsForDeviceLocation: false,
+    };
+  }
+
+  if (!status?.backgroundGranted && Number(status?.androidVersion) >= 29) {
+    const precisionMessage = status.precision === "approximate"
+      ? " Android currently allows approximate location; choose precise location in Settings for more reliable tracking."
+      : "";
+    return {
+      step: "background",
+      title: "Background location required",
+      message: `To keep dispatch updated while you are online with the app in the background or your screen locked, open Settings > Permissions > Location and choose "Allow all the time". Android requires this to be enabled separately.${precisionMessage}`,
+      canContinue: false,
+      canOpenSettings: true,
+      settingsForDeviceLocation: false,
+    };
+  }
+
+  if (!status?.locationServicesEnabled) {
+    return {
+      step: "services",
+      title: "Turn on device location",
+      message: "Android Location services are turned off. Enable device location, then return here and try again.",
+      canContinue: false,
+      canOpenSettings: true,
+      settingsForDeviceLocation: true,
+    };
+  }
+
+  return null;
+};
+
+const updateDriverAvailability = async (isOnline, diagnosticOrigin) => {
+  const candidateEndpoints = isOnline
+    ? [
+        { path: "/drivers/me/heartbeat", method: "post", data: {} },
+        { path: "/drivers/me/availability", method: "put", data: { availability: "available" } },
+        { path: "/driver/me/availability", method: "put", data: { availability: "available" } },
+        { path: "/drivers/me/online", method: "post", data: {} },
+      ]
+    : [
+        { path: "/drivers/me/offline", method: "post", data: {} },
+        { path: "/drivers/me/availability", method: "put", data: { availability: "offline" } },
+        { path: "/driver/me/availability", method: "put", data: { availability: "offline" } },
+      ];
+
+  let lastError = null;
+  for (const candidate of candidateEndpoints) {
+    try {
+      const response =
+        candidate.method === "post"
+          ? await API.post(candidate.path, candidate.data, { diagnosticOrigin })
+          : await API.put(candidate.path, candidate.data, { diagnosticOrigin });
+
+      if (response?.success === false || response?.data?.success === false) {
+        continue;
+      }
+      return response;
+    } catch (error) {
+      lastError = error;
+      const status = error?.response?.status;
+      if (__DEV__) {
+        console.warn(
+          `[driver-availability] ${candidate.method.toUpperCase()} ${candidate.path} failed (${status || "network"})`
+        );
+      }
+      if (status && status !== 404 && status !== 405) {
+        throw error;
+      }
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+  return { success: true };
 };
 
 const STATUS_CONFIG = {
@@ -202,10 +338,20 @@ const getDateLabel = () => {
 };
 
 const normaliseJob = (job, currentUser = null) => {
-  const status = normaliseStatus(job?.status);
   const type = getJobType(job);
-  const myAssignment = normalizeMyDriverAssignment(job, currentUser);
-  const priceInfo = getDriverVisiblePriceInfo(job, myAssignment);
+  const myAssignment = normalizeMyDriverAssignment(job, currentUser, {
+    requireDriverMatch: true,
+  });
+  const pricing = getJobPricingSummary(job, myAssignment);
+
+  // Driver's personal work status takes priority for card status badge & timer
+  const status = myAssignment?.isCompleted
+    ? "completed"
+    : myAssignment?.isInProgress
+    ? "inProgress"
+    : myAssignment?.isPending || myAssignment?.isAssigned
+    ? "upcoming"
+    : normaliseStatus(job?.status);
 
   const rawPickup =
     job?.pickupAddress ??
@@ -222,9 +368,50 @@ const normaliseJob = (job, currentUser = null) => {
     (typeof job?.drop === "string" ? job.drop : (typeof job?.dropoff === "string" ? job.dropoff : job?.dropoff?.formattedAddress)) ??
     "Drop-off address not available";
 
-  const startedAt = myAssignment?.isInProgress
-    ? myAssignment?.startedAt
-    : (job?.startedAt ?? job?.jobStartedAt ?? job?.actualStartTime ?? null);
+  const startedAt = myAssignment?.isInProgress && myAssignment?.startedAt
+    ? myAssignment.startedAt
+    : null;
+
+  const driverVisiblePrice = getDriverVisiblePrice(job, myAssignment);
+  const displayCost =
+    status === "completed"
+      ? pricing.formattedFinalTotal
+      : formatCurrency(driverVisiblePrice);
+
+  if (__DEV__ && (job?.jobNumber === "JOB-00130" || job?.id === "JOB-00130" || job?.jobReference === "JOB-00130")) {
+    console.log("HOME_CARD_PRICE_DEBUG", {
+      jobNumber: job?.jobNumber || job?.id || job?.jobReference,
+      rawJob: job,
+      totalEstimatedCost: job?.totalEstimatedCost,
+      estimatedTotal: job?.estimatedTotal,
+      minimumCost: job?.minimumCost,
+      baseCost: job?.baseCost,
+      driverPrice: job?.driverPrice,
+      totalAmount: job?.totalAmount,
+      billingTotal: job?.billing?.totalAmount,
+      fixedQuote: job?.fixedQuote,
+      displayedPrice: driverVisiblePrice,
+    });
+  }
+
+  const scheduledDate =
+    job?.scheduledDate ??
+    job?.scheduledAt ??
+    job?.scheduledDateTime ??
+    job?.date;
+  const isScheduledToday = isJobScheduledOnDate(job);
+  const dateLabel = formatJobDate(scheduledDate, true);
+  const timeFormatted = formatScheduledTime(job);
+  const hasValidTime =
+    timeFormatted &&
+    timeFormatted !== "--" &&
+    timeFormatted !== "Not available" &&
+    timeFormatted !== "Invalid date";
+  const displaySchedule = isScheduledToday
+    ? (hasValidTime ? timeFormatted : "Today")
+    : (dateLabel !== "--" && dateLabel !== "Invalid Date"
+        ? (hasValidTime ? `${dateLabel} · ${timeFormatted}` : dateLabel)
+        : (hasValidTime ? timeFormatted : "Scheduled"));
 
   return {
     raw: job,
@@ -246,14 +433,17 @@ const normaliseJob = (job, currentUser = null) => {
       "",
     pickup: typeof rawPickup === "string" ? rawPickup : "Pickup address not available",
     dropoff: typeof rawDropoff === "string" ? rawDropoff : "Drop-off address not available",
-    time: formatScheduledTime(job),
+    time: timeFormatted,
+    displaySchedule,
+    isScheduledToday,
+    scheduledDate,
     startedAt,
     type,
-    showPriceToDriver: priceInfo.showPriceToDriver,
-    driverPrice: priceInfo.driverPrice,
-    driverPriceType: priceInfo.driverPriceType,
-    displayCost: priceInfo.formattedPrice,
-    canShowPrice: priceInfo.canShowPrice,
+    showPriceToDriver: pricing.showDriverPrice,
+    driverPrice: pricing.totalEstimatedCost,
+    driverPriceType: pricing.priceType,
+    displayCost,
+    canShowPrice: pricing.canShowPrice,
   };
 };
 
@@ -284,8 +474,14 @@ const StatCard = memo(
 
 const AnimatedCounter = memo(({ value, style }) => {
   const animatedValue = useRef(new Animated.Value(0)).current;
+  const isUnavailable = value === null || value === undefined;
 
   useEffect(() => {
+    if (isUnavailable) {
+      animatedValue.stopAnimation();
+      return;
+    }
+
     const target = Number(value) || 0;
 
     Animated.timing(animatedValue, {
@@ -294,7 +490,11 @@ const AnimatedCounter = memo(({ value, style }) => {
       easing: Easing.out(Easing.cubic),
       useNativeDriver: false,
     }).start();
-  }, [animatedValue, value]);
+  }, [animatedValue, isUnavailable, value]);
+
+  if (isUnavailable) {
+    return <Text style={style}>—</Text>;
+  }
 
   return (
     <Animated.Text style={style}>
@@ -339,10 +539,24 @@ const JobCard = memo(({ job, onPress }) => {
   const status =
     STATUS_CONFIG[job.status] ?? STATUS_CONFIG.upcoming;
 
+  const rawJob = job?.raw || job;
+  const myAssignment = job?.myAssignment || normalizeMyDriverAssignment(rawJob);
+  const pricing = getJobPricingSummary(rawJob, myAssignment, "HomeScreen");
+
+  const displayedPrice =
+    job.status === "completed"
+      ? pricing.finalTotal
+      : getDriverVisiblePrice(rawJob, myAssignment);
+
+  const displayedPriceFormatted =
+    job.status === "completed"
+      ? pricing.formattedFinalTotal
+      : formatCurrency(displayedPrice);
+
   return (
     <TouchableOpacity
       style={styles.jobCard}
-      activeOpacity={0.92}
+      activeOpacity={0.7}
       onPress={() => onPress(job)}
       accessibilityRole="button"
       accessibilityLabel={`Open ${job.id} details`}
@@ -360,7 +574,9 @@ const JobCard = memo(({ job, onPress }) => {
               size={moderateScale(15)}
               color={COLORS.muted}
             />
-            <Text style={styles.jobTime}>{job.time}</Text>
+            <Text style={styles.jobTime}>
+              {job.displaySchedule || job.time}
+            </Text>
           </View>
         </View>
 
@@ -428,24 +644,24 @@ const JobCard = memo(({ job, onPress }) => {
         dropoff={job.dropoff}
       />
 
-      {job.status === "inProgress" ? (
+      {job.status === "inProgress" && job.startedAt ? (
         <JobTimerBanner startedAt={job.startedAt} />
       ) : null}
 
       <View style={styles.jobFooter}>
-        {job.canShowPrice && job.displayCost ? (
+        {pricing.canShowPrice && displayedPrice > 0 ? (
           <View style={styles.costBlock}>
             <Text style={styles.costLabel}>
               {job.status === "completed" ? "Final Driver Amount" : "Estimated Price"}
             </Text>
-            <Text style={styles.costValue}>{job.displayCost}</Text>
+            <Text style={styles.costValue}>{displayedPriceFormatted}</Text>
           </View>
         ) : null}
 
         <View
           style={[
             styles.detailsAction,
-            (!job.canShowPrice || !job.displayCost) && { marginLeft: "auto" },
+            (!pricing.canShowPrice || displayedPrice <= 0) && { marginLeft: "auto" },
           ]}
         >
           <Text style={styles.detailsActionText}>View details</Text>
@@ -461,20 +677,48 @@ const JobCard = memo(({ job, onPress }) => {
   );
 });
 
-const EmptyJobs = memo(() => (
+const EmptyJobs = memo(({ error, onRetry, title, subtitle, icon, actionText, onAction }) => (
   <View style={styles.emptyCard}>
     <View style={styles.emptyIcon}>
       <AppIcon
         library="MaterialCommunityIcons"
-        name="clipboard-text-clock-outline"
+        name={
+          error
+            ? "alert-circle-outline"
+            : icon || "clipboard-text-clock-outline"
+        }
         size={moderateScale(44)}
-        color={COLORS.blue500}
+        color={error ? COLORS.red500 : COLORS.blue500}
       />
     </View>
-    <Text style={styles.emptyTitle}>No active jobs</Text>
-    <Text style={styles.emptySubtitle}>
-      New assigned and in-progress jobs will appear here.
+    <Text style={styles.emptyTitle}>
+      {error ? (typeof error === "string" ? error : "Unable to load jobs") : title || "No active jobs"}
     </Text>
+    <Text style={styles.emptySubtitle}>
+      {subtitle ||
+        (error
+          ? "Your job list could not be refreshed. Check your connection and retry."
+          : "New assigned and in-progress jobs will appear here.")}
+    </Text>
+    {error && onRetry ? (
+      <TouchableOpacity
+        style={styles.emptyRetry}
+        onPress={onRetry}
+        accessibilityRole="button"
+        accessibilityLabel="Retry loading jobs"
+      >
+        <Text style={styles.emptyRetryText}>Retry</Text>
+      </TouchableOpacity>
+    ) : null}
+    {!error && actionText && onAction ? (
+      <TouchableOpacity
+        style={[styles.emptyRetry, { backgroundColor: COLORS.navy900 }]}
+        onPress={onAction}
+        accessibilityRole="button"
+      >
+        <Text style={styles.emptyRetryText}>{actionText}</Text>
+      </TouchableOpacity>
+    ) : null}
   </View>
 ));
 
@@ -711,17 +955,20 @@ const HomeScreen = ({ navigation }) => {
   const [profile, setProfile] = useState(null);
   const [jobs, setJobs] = useState([]);
   const [stats, setStats] = useState({
-    assigned: 0,
-    inProgress: 0,
-    completed: 0,
+    assigned: null,
+    inProgress: null,
+    completed: null,
   });
-  const [unreadCount, setUnreadCount] = useState(0);
+  const [jobLoadError, setJobLoadError] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(() => getDriverUnreadCount());
   const [isOnline, setIsOnline] = useState(true);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] =
     useState(false);
   const [togglingStatus, setTogglingStatus] =
     useState(false);
+  const [locationPermissionDialog, setLocationPermissionDialog] = useState(null);
+  const [locationActionInFlight, setLocationActionInFlight] = useState(false);
   const [toast, setToast] = useState({
     visible: false,
     type: "success",
@@ -730,6 +977,13 @@ const HomeScreen = ({ navigation }) => {
 
   const toastTimer = useRef(null);
   const isMountedRef = useRef(true);
+  const hasLoadedJobsRef = useRef(false);
+  const homeRequestInProgressRef = useRef(false);
+  const locationSettingsOpenRef = useRef(false);
+  const previousAppStateRef = useRef(AppState.currentState);
+  const locationWarningShownRef = useRef(false);
+  const suppressAutomaticTrackingRef = useRef(false);
+  const offlineReconciliationNeededRef = useRef(false);
 
   const showToast = useCallback(
     (message, type = "success") => {
@@ -757,25 +1011,38 @@ const HomeScreen = ({ navigation }) => {
 
   const loadHomeData = useCallback(
     async ({ silent = false } = {}) => {
+      if (homeRequestInProgressRef.current) return;
+      homeRequestInProgressRef.current = true;
+
       if (!silent) {
         setLoading(true);
       }
 
-      // 1. Immediately use cached user profile if available
+      // 1. Immediately hydrate cached user profile & jobs for instant display (< 100ms)
       try {
         const cachedUser = await getStoredUser();
         if (cachedUser && isMountedRef.current) {
           setProfile((prev) => prev || cachedUser);
+        }
+        const cachedJobs = getCachedDriverJobs() || (await loadPersistedDriverJobs());
+        if (cachedJobs && Array.isArray(cachedJobs) && cachedJobs.length > 0 && isMountedRef.current) {
+          const cachedNormalised = cachedJobs
+            .map((job) => normaliseJob(job, cachedUser))
+            .filter((job) => job.myAssignment?.isAssigned && ["upcoming", "inProgress"].includes(job.status));
+          setJobs((prev) => (prev && prev.length > 0 ? prev : cachedNormalised));
+          setLoading(false);
+          hasLoadedJobsRef.current = true;
         }
       } catch (e) { }
 
       try {
         const [
           profileResponse,
-          jobsResponse,
-          notificationsResponse,
+          jobResult,
         ] = await Promise.all([
-          API.get("/auth/me").catch((err) => {
+          API.get("/auth/me", {
+            diagnosticOrigin: "HomeScreen.loadHomeData profile",
+          }).catch((err) => {
             console.log("[Home] /auth/me error:", err?.response?.status, err?.message);
             if (err?.response?.status === 401) {
               clearAuthToken();
@@ -783,22 +1050,18 @@ const HomeScreen = ({ navigation }) => {
             }
             return null;
           }),
-          API.get("/jobs/driver/my-jobs").catch(async (err) => {
-            console.log("[Home] /jobs/driver/my-jobs error:", err?.response?.status, err?.message);
-            return API.get("/jobs/my-jobs").catch(async () => {
-              return API.get("/jobs").catch(() => null);
-            });
-          }),
-          API.get("/notifications?limit=1").catch(
-            () => null
-          ),
+          fetchDriverJobs("HomeScreen.loadHomeData driver jobs")
+            .then((jobs) => ({ jobs }))
+            .catch((error) => ({ error })),
         ]);
 
+        const authUser = profileResponse?.user ?? profileResponse?.data?.user;
+        const driverProfile =
+          profileResponse?.driver ?? profileResponse?.data?.driver;
         const profileData =
-          profileResponse?.user ??
-          profileResponse?.driver ??
-          profileResponse?.data?.user ??
-          profileResponse?.data?.driver ??
+          (authUser && driverProfile
+            ? { ...authUser, driverProfile }
+            : authUser ?? driverProfile) ??
           profileResponse?.data ??
           profileResponse ??
           (await getStoredUser()) ??
@@ -811,71 +1074,84 @@ const HomeScreen = ({ navigation }) => {
           }
         }
 
-        const rawJobs =
-          jobsResponse?.jobs ??
-          jobsResponse?.data?.jobs ??
-          jobsResponse?.bookings ??
-          jobsResponse?.data?.bookings ??
-          jobsResponse?.data ??
-          jobsResponse?.results ??
-          (Array.isArray(jobsResponse) ? jobsResponse : []);
+        if (jobResult.error) {
+          if (isMountedRef.current) {
+            setJobLoadError(jobResult.error);
+            if (!hasLoadedJobsRef.current) {
+              setStats({ assigned: null, inProgress: null, completed: null });
+            }
+          }
+        } else {
+          const rawJobs = jobResult.jobs;
+          console.info("[Home] loaded driver jobs:", {
+            count: rawJobs.length,
+            jobNumbers: rawJobs.map((job) =>
+              job.jobNumber || job.jobReference || job.referenceNumber || job._id
+            ),
+          });
 
-        const normalisedJobs = (Array.isArray(rawJobs) ? rawJobs : [])
-          .map((j) => normaliseJob(j, profileData))
-          .filter((job) =>
-            ["upcoming", "inProgress", "completed"].includes(
-              job.status
-            )
-          );
+          const normalisedJobs = rawJobs
+            .map((job) => normaliseJob(job, profileData))
+            .filter((job) =>
+              job.myAssignment?.isAssigned &&
+              ["upcoming", "inProgress", "completed"].includes(job.status)
+            );
 
-        const inProgressJobs =
-          normalisedJobs.filter(
-            (job) => job.status === "inProgress"
-          );
-        const upcomingJobs =
-          normalisedJobs.filter(
-            (job) => job.status === "upcoming"
-          );
-        const completedJobs =
-          normalisedJobs.filter(
-            (job) => job.status === "completed"
-          );
+          const inProgressJobs =
+            normalisedJobs.filter(
+              (job) => job.status === "inProgress"
+            );
+          const upcomingJobs =
+            normalisedJobs.filter(
+              (job) => job.status === "upcoming"
+            );
+          const completedJobs =
+            normalisedJobs.filter(
+              (job) => job.status === "completed"
+            );
 
-        // Show all in-progress jobs (running) and upcoming jobs (not started yet)
-        const homeJobs = [
-          ...inProgressJobs,
-          ...upcomingJobs,
-        ];
+          // Show all in-progress jobs (running) and upcoming jobs (not started yet)
+          const homeJobs = [
+            ...inProgressJobs,
+            ...upcomingJobs,
+          ];
 
-        if (!isMountedRef.current) return;
+          if (!isMountedRef.current) return;
+
+          hasLoadedJobsRef.current = true;
+          setJobLoadError(null);
+          setJobs(homeJobs);
+          setStats({
+            assigned: upcomingJobs.length,
+            inProgress: inProgressJobs.length,
+            completed: completedJobs.length,
+          });
+        }
 
         if (profileData) {
           setProfile(profileData);
           setIsOnline(
             profileData?.isOnline ??
             profileData?.online ??
-            profileData?.availability !== "offline"
+            ["available", "online"].includes(
+              String(profileData?.availability || "").trim().toLowerCase()
+            )
           );
         }
-        setJobs(homeJobs);
-        setStats({
-          assigned: upcomingJobs.length,
-          inProgress: inProgressJobs.length,
-          completed: completedJobs.length,
-        });
-        setUnreadCount(
-          Number(
-            notificationsResponse?.unreadCount ??
-            notificationsResponse?.data
-              ?.unreadCount ??
-            0
-          ) || 0
-        );
       } catch (error) {
         if (!isMountedRef.current) return;
 
-        console.log("[Home] loadHomeData top error:", error);
+        console.warn("[Home] loadHomeData failed:", {
+          name: error?.name,
+          message: error?.message,
+          stack: error?.stack,
+        });
+        setJobLoadError(error);
+        if (!hasLoadedJobsRef.current) {
+          setStats({ assigned: null, inProgress: null, completed: null });
+        }
       } finally {
+        homeRequestInProgressRef.current = false;
         if (isMountedRef.current) {
           setLoading(false);
           setRefreshing(false);
@@ -887,35 +1163,184 @@ const HomeScreen = ({ navigation }) => {
 
   useEffect(() => {
     isMountedRef.current = true;
+    fetchDriverUnreadCount().catch(() => {});
+
+    const unsubscribeUnread = subscribeUnreadCount((count) => {
+      if (isMountedRef.current) {
+        setUnreadCount(count);
+      }
+    });
+
+    const unsubscribeNotifications = subscribeNotifications(() => {
+      loadHomeData({ silent: true });
+    });
 
     return () => {
       isMountedRef.current = false;
+      unsubscribeUnread();
+      unsubscribeNotifications();
 
       if (toastTimer.current) {
         clearTimeout(toastTimer.current);
       }
     };
-  }, []);
+  }, [loadHomeData]);
 
   useFocusEffect(
     useCallback(() => {
       loadHomeData({ silent: true });
+      fetchDriverUnreadCount().catch(() => {});
     }, [loadHomeData])
   );
 
   useEffect(() => {
+    const unsubscribeAuthorization = subscribeNativeLocationAuthorization(
+      (status) => {
+        if (__DEV__) {
+          console.info("[LOCATION_PERMISSION_DEBUG] native callback state:", status);
+        }
+      }
+    );
     const subscription =
       AppState.addEventListener(
         "change",
-        (nextState) => {
+        async (nextState) => {
           if (nextState === "active") {
+            const returnedFromSettings =
+              locationSettingsOpenRef.current &&
+              previousAppStateRef.current !== "active";
+            previousAppStateRef.current = nextState;
+
+            if (Platform.OS === "android") {
+              try {
+                const status = await getAndroidLocationPermissionStatus();
+                if (__DEV__) {
+                  console.info("[LOCATION_PERMISSION_DEBUG] appstate native status:", status);
+                }
+                if (isMountedRef.current) {
+                  if (returnedFromSettings) {
+                    locationSettingsOpenRef.current = false;
+                    setLocationPermissionDialog(
+                      getAndroidLocationPermissionDialog(status)
+                    );
+                  }
+                }
+              } catch (error) {
+                if (isMountedRef.current) {
+                  setLocationPermissionDialog(null);
+                  showToast("Unable to recheck Android location permissions.", "error");
+                }
+              }
+            } else if (__DEV__) {
+              const nativeState = await getNativeLocationPermissionState();
+              console.info("[LOCATION_PERMISSION_DEBUG] appstate native status:", nativeState);
+            }
+            if (offlineReconciliationNeededRef.current) {
+              const reconciliationErrors = [];
+              try {
+                await updateDriverAvailability(
+                  false,
+                  "HomeScreen.reconcileOfflineAvailability"
+                );
+              } catch (error) {
+                reconciliationErrors.push(error);
+              }
+              try {
+                await stopDriverTrackingAndMarkOffline();
+              } catch (error) {
+                reconciliationErrors.push(error);
+              }
+              offlineReconciliationNeededRef.current =
+                reconciliationErrors.length > 0;
+              if (reconciliationErrors.length > 0 && isMountedRef.current) {
+                showToast(
+                  "Tracking is stopped, but the server has not confirmed Offline. It will be retried.",
+                  "error"
+                );
+              }
+            }
             loadHomeData({ silent: true });
+          } else {
+            previousAppStateRef.current = nextState;
           }
         }
       );
 
-    return () => subscription.remove();
-  }, [loadHomeData]);
+    return () => {
+      subscription.remove();
+      unsubscribeAuthorization();
+    };
+  }, [loadHomeData, showToast]);
+
+  useEffect(() => {
+    if (!profile) {
+      return undefined;
+    }
+
+    if (!isOnline) {
+      stopDriverLocationTracking().catch(() => {
+        console.warn("[LOCATION_WATCH_STARTED] could not stop offline tracking");
+      });
+      return undefined;
+    }
+    if (suppressAutomaticTrackingRef.current) {
+      return undefined;
+    }
+
+    let active = true;
+    const hasActiveJob = jobs.some((job) => job.status === "inProgress");
+
+    const resumeTracking = async () => {
+      if (Platform.OS === "android") {
+        const permissionStatus = await getAndroidLocationPermissionStatus();
+        const permissionDialog =
+          getAndroidLocationPermissionDialog(permissionStatus);
+        if (permissionDialog) {
+          if (!locationWarningShownRef.current) {
+            locationWarningShownRef.current = true;
+            showToast(
+              "Location access is required to keep your online status tracked.",
+              "error"
+            );
+          }
+          return false;
+        }
+      }
+
+      return startDriverLocationTracking({
+        user: profile,
+        isActiveJob: hasActiveJob,
+        permissionGranted: Platform.OS === "android",
+        serverConfirmedOnline: true,
+      });
+    };
+
+    resumeTracking()
+      .then((started) => {
+        if (active && !started) {
+          if (Platform.OS !== "android") {
+            showToast(
+              "Location permission is required to share your location while online.",
+              "error"
+            );
+          }
+        } else if (started) {
+          locationWarningShownRef.current = false;
+        }
+      })
+      .catch(() => {
+        if (active) {
+          if (!locationWarningShownRef.current) {
+            locationWarningShownRef.current = true;
+            showToast("Unable to start location tracking.", "error");
+          }
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [isOnline, profile, jobs, showToast]);
 
   // Periodic refresh when active jobs are in progress
   useEffect(() => {
@@ -936,6 +1361,30 @@ const HomeScreen = ({ navigation }) => {
     loadHomeData({ silent: true });
   }, [loadHomeData]);
 
+  const todaysJobs = useMemo(
+    () => jobs.filter((job) => isJobScheduledOnDate(job.raw || job)),
+    [jobs]
+  );
+
+  const upcomingFutureJobs = useMemo(
+    () =>
+      jobs
+        .filter((job) => !isJobScheduledOnDate(job.raw || job) && (job.status === "upcoming" || job.status === "inProgress"))
+        .sort((a, b) => {
+          const dateA = new Date(a.raw?.scheduledDate || a.raw?.scheduledAt || a.raw?.scheduledDateTime || 0).getTime();
+          const dateB = new Date(b.raw?.scheduledDate || b.raw?.scheduledAt || b.raw?.scheduledDateTime || 0).getTime();
+          return dateA - dateB;
+        }),
+    [jobs]
+  );
+
+  const displayedJobs = useMemo(() => {
+    if (todaysJobs.length > 0) {
+      return [...todaysJobs, ...upcomingFutureJobs.slice(0, 3)];
+    }
+    return upcomingFutureJobs.slice(0, 5);
+  }, [todaysJobs, upcomingFutureJobs]);
+
   const handleToggleOnline = useCallback(
     async () => {
       if (togglingStatus) return;
@@ -944,33 +1393,125 @@ const HomeScreen = ({ navigation }) => {
 
       try {
         setTogglingStatus(true);
-
-        const response = await API.put(
-          "/driver/me/availability",
-          {
-            availability: nextOnlineState
-              ? "available"
-              : "offline",
+        if (nextOnlineState) {
+          if (Platform.OS === "android") {
+            const status = await getAndroidLocationPermissionStatus();
+            const dialog = getAndroidLocationPermissionDialog(status);
+            if (dialog) {
+              setLocationPermissionDialog(dialog);
+              return;
+            }
+            setLocationPermissionDialog(null);
+          } else {
+            const permissionGranted = await requestDriverLocationPermission();
+            if (!permissionGranted) {
+              const nativeState = await getNativeLocationPermissionState();
+              if (nativeState === "denied" || nativeState === "restricted") {
+                Alert.alert(
+                  "Location Permission Denied",
+                  "Location access is currently turned off for DeliveryPlus. To share your location with dispatch while online, enable Location in Settings.",
+                  [
+                    { text: "Not Now", style: "cancel" },
+                    {
+                      text: "Open Settings",
+                      onPress: () => openLocationSettings(),
+                    },
+                  ]
+                );
+              } else {
+                showToast("Location permission was not granted.", "error");
+              }
+              return;
+            }
           }
-        );
 
-        if (
-          response?.success === false ||
-          response?.data?.success === false
-        ) {
-          throw new Error(
-            response?.message ??
-            response?.data?.message ??
-            "Unable to update availability."
+          suppressAutomaticTrackingRef.current = false;
+          await updateDriverAvailability(
+            true,
+            "HomeScreen.handleToggleOnline"
           );
+
+          try {
+            const started = await startDriverLocationTracking({
+              user: profile,
+              isActiveJob: jobs.some((job) => job.status === "inProgress"),
+              permissionGranted: true,
+              serverConfirmedOnline: true,
+            });
+            if (!started) {
+              throw new Error("Location tracking did not start.");
+            }
+          } catch (error) {
+            const rollbackErrors = [];
+            try {
+              await stopDriverLocationTracking();
+            } catch (rollbackError) {
+              rollbackErrors.push(rollbackError);
+            }
+            try {
+              await updateDriverAvailability(
+                false,
+                "HomeScreen.rollbackOnlineAvailability"
+              );
+            } catch (rollbackError) {
+              rollbackErrors.push(rollbackError);
+            }
+            try {
+              await stopDriverTrackingAndMarkOffline();
+            } catch (rollbackError) {
+              rollbackErrors.push(rollbackError);
+            }
+            suppressAutomaticTrackingRef.current = true;
+            offlineReconciliationNeededRef.current =
+              rollbackErrors.length > 0;
+            if (rollbackErrors.length > 0) {
+              console.warn(
+                "[LOCATION_UPLOAD_FAILED] online activation rollback was incomplete"
+              );
+            }
+            throw new Error(
+              rollbackErrors.length > 0
+                ? "Location tracking could not start and Offline could not be confirmed with the server."
+                : error?.message || "Unable to start location tracking."
+            );
+          }
+
+          setIsOnline(true);
+          showToast("You are now online.");
+          return;
         }
 
-        setIsOnline(nextOnlineState);
-        showToast(
-          nextOnlineState
-            ? "You are now online."
-            : "You are now offline."
-        );
+        suppressAutomaticTrackingRef.current = true;
+        const offlineErrors = [];
+        try {
+          await stopDriverLocationTracking();
+        } catch (error) {
+          offlineErrors.push(error);
+        }
+        try {
+          await updateDriverAvailability(
+            false,
+            "HomeScreen.handleToggleOnline"
+          );
+        } catch (error) {
+          offlineErrors.push(error);
+        }
+        try {
+          await stopDriverTrackingAndMarkOffline();
+        } catch (error) {
+          offlineErrors.push(error);
+        }
+
+        offlineReconciliationNeededRef.current = offlineErrors.length > 0;
+        setIsOnline(false);
+        if (offlineErrors.length > 0) {
+          showToast(
+            "GPS tracking is stopped, but the server has not confirmed Offline. The app will retry.",
+            "error"
+          );
+        } else {
+          showToast("You are now offline.");
+        }
       } catch (error) {
         showToast(
           error?.response?.data?.message ??
@@ -984,10 +1525,68 @@ const HomeScreen = ({ navigation }) => {
     },
     [
       isOnline,
+      profile,
+      jobs,
       showToast,
       togglingStatus,
     ]
   );
+
+  const continueLocationPermissionSetup = useCallback(async () => {
+    setLocationActionInFlight(true);
+    try {
+      await requestDriverLocationPermission();
+      const status = await getAndroidLocationPermissionStatus();
+      const dialog = getAndroidLocationPermissionDialog(status);
+      if (dialog) {
+        setLocationPermissionDialog(dialog);
+      } else {
+        setLocationPermissionDialog(null);
+        await handleToggleOnline();
+      }
+    } catch (error) {
+      showToast(
+        error?.message || "Unable to request Android location permission.",
+        "error"
+      );
+    } finally {
+      setLocationActionInFlight(false);
+    }
+  }, [handleToggleOnline, showToast]);
+
+  const openLocationPermissionSettings = useCallback(async () => {
+    const dialog = locationPermissionDialog;
+    setLocationPermissionDialog(null);
+    locationSettingsOpenRef.current = true;
+    const opened = dialog?.settingsForDeviceLocation
+      ? await openDeviceLocationSettings()
+      : await openLocationSettings();
+    if (!opened) {
+      locationSettingsOpenRef.current = false;
+      showToast("Unable to open Android location settings.", "error");
+    }
+  }, [locationPermissionDialog, showToast]);
+
+  const retryLocationPermissionCheck = useCallback(async () => {
+    setLocationActionInFlight(true);
+    try {
+      const status = await getAndroidLocationPermissionStatus();
+      const dialog = getAndroidLocationPermissionDialog(status);
+      if (dialog) {
+        setLocationPermissionDialog(dialog);
+      } else {
+        setLocationPermissionDialog(null);
+        await handleToggleOnline();
+      }
+    } catch (error) {
+      showToast(
+        error?.message || "Unable to recheck Android location permission.",
+        "error"
+      );
+    } finally {
+      setLocationActionInFlight(false);
+    }
+  }, [handleToggleOnline, showToast]);
 
   const handleOpenJob = useCallback(
     (job) => {
@@ -1016,6 +1615,7 @@ const HomeScreen = ({ navigation }) => {
             onViewAll={() =>
               navigation.navigate("JobsTab")
             }
+            sectionTitle={todaysJobs.length > 0 ? "Today's Jobs" : "Assigned Jobs"}
           />
         );
       }
@@ -1033,6 +1633,7 @@ const HomeScreen = ({ navigation }) => {
           onViewAll={() =>
             navigation.navigate("JobsTab")
           }
+          sectionTitle={todaysJobs.length > 0 ? "Today's Jobs" : "Assigned Jobs"}
         />
       );
     },
@@ -1042,6 +1643,7 @@ const HomeScreen = ({ navigation }) => {
       navigation,
       profile,
       stats,
+      todaysJobs.length,
       togglingStatus,
       unreadCount,
     ]
@@ -1057,7 +1659,7 @@ const HomeScreen = ({ navigation }) => {
     [handleOpenJob]
   );
 
-  if (loading) {
+  if (loading && (!jobs || jobs.length === 0)) {
     return (
       <LoadingSpinner
         fullScreen
@@ -1102,14 +1704,156 @@ const HomeScreen = ({ navigation }) => {
         </View>
       ) : null}
 
+      <Modal
+        visible={Boolean(locationPermissionDialog)}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setLocationPermissionDialog(null)}
+      >
+        <View style={styles.locationModalBackdrop}>
+          <View style={styles.locationModalCard}>
+            <Text style={styles.locationModalTitle}>
+              {locationPermissionDialog?.title}
+            </Text>
+            <Text style={styles.locationModalMessage}>
+              {locationPermissionDialog?.message}
+            </Text>
+            {locationPermissionDialog?.canContinue ? (
+              <TouchableOpacity
+                style={styles.locationModalPrimaryButton}
+                onPress={continueLocationPermissionSetup}
+                disabled={locationActionInFlight || togglingStatus}
+                accessibilityRole="button"
+              >
+                {locationActionInFlight ? (
+                  <ActivityIndicator color={COLORS.white} />
+                ) : (
+                  <Text style={styles.locationModalPrimaryText}>Continue</Text>
+                )}
+              </TouchableOpacity>
+            ) : null}
+            {locationPermissionDialog?.canOpenSettings ? (
+              <TouchableOpacity
+                style={styles.locationModalSecondaryButton}
+                onPress={openLocationPermissionSettings}
+                disabled={locationActionInFlight || togglingStatus}
+                accessibilityRole="button"
+              >
+                <Text style={styles.locationModalSecondaryText}>
+                  Open Settings
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity
+              style={styles.locationModalSecondaryButton}
+              onPress={retryLocationPermissionCheck}
+              disabled={locationActionInFlight || togglingStatus}
+              accessibilityRole="button"
+            >
+              <Text style={styles.locationModalSecondaryText}>Try Again</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.locationModalCancelButton}
+              onPress={() => setLocationPermissionDialog(null)}
+              disabled={locationActionInFlight}
+              accessibilityRole="button"
+            >
+              <Text style={styles.locationModalCancelText}>Not Now</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       <FlatList
-        data={jobs}
+        data={displayedJobs}
         keyExtractor={(item) =>
           String(item.backendId ?? item.id)
         }
         renderItem={renderJob}
-        ListHeaderComponent={listHeader}
-        ListEmptyComponent={EmptyJobs}
+        initialNumToRender={6}
+        maxToRenderPerBatch={8}
+        windowSize={7}
+        removeClippedSubviews={Platform.OS === "android"}
+        ListHeaderComponent={
+          <>
+            {jobLoadError ? (
+              <View style={styles.loadErrorBanner}>
+                <Text style={styles.loadErrorText}>
+                  {jobLoadError?.response?.status === 401
+                    ? "Session expired. Please log in again."
+                    : jobLoadError?.response?.status === 403
+                    ? "Access restricted. Contact dispatch."
+                    : !jobLoadError?.response
+                    ? "Network unavailable. Check your connection."
+                    : "Unable to refresh driver jobs."}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => loadHomeData()}
+                  accessibilityRole="button"
+                  accessibilityLabel="Retry loading jobs"
+                >
+                  <Text style={styles.loadErrorRetry}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+            {listHeader}
+          </>
+        }
+        ListFooterComponent={
+          jobs.length > 0 ? (
+            <View style={styles.viewAllFooterWrap}>
+              <TouchableOpacity
+                style={styles.viewAllFooterBtn}
+                onPress={() => navigation.navigate("JobsTab")}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="View all assigned jobs"
+              >
+                <Text style={styles.viewAllFooterText}>
+                  View all assigned jobs ({jobs.length})
+                </Text>
+                <AppIcon
+                  library="Feather"
+                  name="arrow-right"
+                  size={15}
+                  color={COLORS.navy900}
+                />
+              </TouchableOpacity>
+            </View>
+          ) : null
+        }
+        ListEmptyComponent={
+          jobLoadError ? (
+            <EmptyJobs
+              error={
+                jobLoadError?.response?.status === 401
+                  ? "Session Expired"
+                  : jobLoadError?.response?.status === 403
+                  ? "Access Restricted"
+                  : !jobLoadError?.response
+                  ? "Network Unavailable"
+                  : "API Request Failed"
+              }
+              subtitle={
+                jobLoadError?.response?.status === 401
+                  ? "Your session has expired. Please log in again to continue."
+                  : jobLoadError?.response?.status === 403
+                  ? "Your account does not have permission to view assigned jobs. Contact dispatch."
+                  : !jobLoadError?.response
+                  ? "Unable to connect to the server. Check your internet connection and retry."
+                  : "Could not fetch driver assignments. Tap retry to try again."
+              }
+              onRetry={() => loadHomeData()}
+            />
+          ) : (
+            <EmptyJobs
+              title="No assigned jobs"
+              subtitle="You currently have no jobs assigned. New assignments from dispatch will appear here."
+              onRetry={() => loadHomeData()}
+            />
+          )
+        }
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[
           styles.listContent,
@@ -1138,6 +1882,68 @@ export default HomeScreen;
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
+  },
+  locationModalBackdrop: {
+    flex: 1,
+    justifyContent: "center",
+    paddingHorizontal: scale(24),
+    backgroundColor: "rgba(3, 14, 29, 0.68)",
+  },
+  locationModalCard: {
+    borderRadius: moderateScale(18),
+    padding: moderateScale(22),
+    backgroundColor: COLORS.white,
+    elevation: 12,
+  },
+  locationModalTitle: {
+    color: COLORS.text,
+    fontSize: moderateScale(19),
+    fontWeight: "700",
+    marginBottom: verticalScale(10),
+  },
+  locationModalMessage: {
+    color: COLORS.muted,
+    fontSize: moderateScale(14),
+    lineHeight: moderateScale(21),
+    marginBottom: verticalScale(16),
+  },
+  locationModalPrimaryButton: {
+    minHeight: verticalScale(46),
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: moderateScale(11),
+    marginTop: verticalScale(5),
+    backgroundColor: COLORS.blue500,
+  },
+  locationModalPrimaryText: {
+    color: COLORS.white,
+    fontSize: moderateScale(14),
+    fontWeight: "700",
+  },
+  locationModalSecondaryButton: {
+    minHeight: verticalScale(44),
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: moderateScale(11),
+    marginTop: verticalScale(8),
+  },
+  locationModalSecondaryText: {
+    color: COLORS.navy800,
+    fontSize: moderateScale(14),
+    fontWeight: "600",
+  },
+  locationModalCancelButton: {
+    minHeight: verticalScale(40),
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: verticalScale(4),
+  },
+  locationModalCancelText: {
+    color: COLORS.muted,
+    fontSize: moderateScale(14),
+    fontWeight: "600",
     backgroundColor: Platform.OS === "ios" ? COLORS.background : COLORS.navy900,
   },
   listContent: {
@@ -1785,6 +2591,40 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: verticalScale(5),
   },
+  emptyRetry: {
+    marginTop: verticalScale(14),
+    paddingHorizontal: scale(20),
+    paddingVertical: verticalScale(9),
+    borderRadius: moderateScale(12),
+    backgroundColor: COLORS.blue500,
+  },
+  emptyRetryText: {
+    color: COLORS.white,
+    fontSize: moderateScale(12),
+    fontWeight: "700",
+  },
+  loadErrorBanner: {
+    marginHorizontal: scale(14),
+    marginTop: verticalScale(8),
+    marginBottom: verticalScale(10),
+    paddingHorizontal: scale(12),
+    paddingVertical: verticalScale(10),
+    borderRadius: moderateScale(12),
+    backgroundColor: "#FEF2F2",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  loadErrorText: {
+    color: "#B91C1C",
+    fontSize: moderateScale(12),
+    fontWeight: "600",
+  },
+  loadErrorRetry: {
+    color: COLORS.blue500,
+    fontSize: moderateScale(12),
+    fontWeight: "700",
+  },
 
   toast: {
     position: "absolute",
@@ -1814,5 +2654,60 @@ const styles = StyleSheet.create({
     fontSize: moderateScale(10.5),
     fontWeight: "700",
     marginLeft: scale(7),
+  },
+
+  upcomingNoticeCard: {
+    marginHorizontal: scale(16),
+    marginTop: verticalScale(4),
+    marginBottom: verticalScale(12),
+    paddingHorizontal: scale(14),
+    paddingVertical: verticalScale(12),
+    borderRadius: moderateScale(16),
+    backgroundColor: "#F0F7FF",
+    borderWidth: 1,
+    borderColor: "#BAE6FD",
+  },
+  upcomingNoticeHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: scale(6),
+  },
+  upcomingNoticeTitle: {
+    fontSize: moderateScale(13.5),
+    fontWeight: "800",
+    color: COLORS.navy900,
+  },
+  upcomingNoticeSubtitle: {
+    marginTop: verticalScale(4),
+    fontSize: moderateScale(11.5),
+    lineHeight: moderateScale(17),
+    color: COLORS.muted,
+    fontWeight: "500",
+  },
+  viewAllFooterWrap: {
+    marginTop: verticalScale(12),
+    marginBottom: verticalScale(8),
+    alignItems: "center",
+  },
+  viewAllFooterBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: scale(8),
+    backgroundColor: COLORS.white,
+    paddingHorizontal: scale(20),
+    paddingVertical: verticalScale(12),
+    borderRadius: moderateScale(16),
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  viewAllFooterText: {
+    fontSize: moderateScale(13),
+    fontWeight: "800",
+    color: COLORS.navy900,
   },
 });

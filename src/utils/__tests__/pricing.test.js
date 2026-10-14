@@ -1,14 +1,29 @@
 import {
   normalizeJob,
   calculateDriverHourlyEarnings,
-  getDriverVisiblePriceInfo,
   getJobPricingSummary,
-  isDriverPriceVisible,
-  getDriverPriceType,
-  resolveDriverPriceAmount,
+  getDriverVisiblePrice,
+  formatCurrency,
 } from "../jobHelpers";
 
 describe("Driver Pricing Logic", () => {
+  test("getDriverVisiblePrice returns the normalized driver amount", () => {
+    const job = {
+      status: "assigned",
+      showDriverPrice: true,
+      driverPriceType: "hourly",
+      hourlyRate: 60,
+      baseHours: 2,
+    };
+
+    expect(getDriverVisiblePrice(job)).toBe(120);
+  });
+
+  test("formatCurrency formats finite amounts and rejects invalid values", () => {
+    expect(formatCurrency(120)).toBe("$120.00");
+    expect(formatCurrency(Number.NaN)).toBeNull();
+  });
+
   test("JOB-00103 Full Price Mode ($200) with showDriverPrice: true", () => {
     const job103 = {
       _id: "job_00103_id",
@@ -1142,5 +1157,265 @@ describe("Driver Pricing Logic", () => {
       consoleWarnSpy.mockRestore();
     });
   });
-});
 
+  // ── SECTION 21: JOB-00127 Real Test Job ($100 Base + $50 Callout + $50 Stairs = $200 Estimated Total) ──
+  describe("JOB-00127 Real Test Job: Pricing Source Mismatch Resolution ($200 Everywhere)", () => {
+    // Backend payload where customer gross booking total / billing.totalAmount = 300,
+    // but driver breakdown is: Hourly Rate $100/hr, Min Duration 1 Hr ($100), Callout $50, Stairs $50 -> $200
+    const rawJob00127 = {
+      _id: "job_00127_id",
+      jobNumber: "JOB-00127",
+      jobType: "moving",
+      status: "assigned",
+      showDriverPrice: true,
+      driverPriceType: "hourly",
+      totalAmount: 300, // Customer invoice / gross amount ($300)
+      billing: {
+        totalAmount: 300, // Must NOT override driver totalEstimatedCost
+        hourlyRate: 100,
+        calloutCharge: 50,
+        stairsFee: 50,
+      },
+      pricing: {
+        hourlyRate: 100,
+        estimatedHours: 1,
+        minimumLaborCost: 100,
+        calloutCharge: 50,
+        stairsFee: 50,
+        estimatedTotal: 200,
+      },
+      myAssignment: {
+        driverId: "driver_1",
+        status: "assigned",
+        pricing: {
+          hourlyRate: 100,
+          baseHours: 1,
+        },
+      },
+    };
+
+    test("1. getJobPricingSummary(job, myAssignment) returns exact required structure and $200 totalEstimatedCost", () => {
+      const summary = getJobPricingSummary(rawJob00127, rawJob00127.myAssignment);
+
+      // Verify all required fields from task specification
+      expect(summary.hourlyRate).toBe(100);
+      expect(summary.minimumDuration).toBe(1);
+      expect(summary.minimumCost).toBe(100);
+      expect(summary.calloutFee).toBe(50);
+      expect(summary.stairsFee).toBe(50);
+      expect(summary.travelBackFee).toBe(0);
+      expect(summary.totalEstimatedCost).toBe(200);
+      expect(summary.overtimeAmount).toBe(0);
+      expect(summary.finalAmount).toBe(200);
+
+      // Formatted values check
+      expect(summary.formattedHourlyRate).toBe("$100.00/hr");
+      expect(summary.formattedMinimumCost).toBe("$100.00");
+      expect(summary.formattedCalloutFee).toBe("$50.00");
+      expect(summary.formattedStairsFee).toBe("$50.00");
+      expect(summary.formattedTotalEstimatedCost).toBe("$200.00");
+      expect(summary.formattedEstimatedTotal).toBe("$200.00");
+    });
+
+    test("2. HomeScreen pre-start job card displays $200.00 (NOT customer $300)", () => {
+      const homeScreenJob = normalizeJob(rawJob00127, { _id: "driver_1" });
+
+      expect(homeScreenJob.canShowPrice).toBe(true);
+      expect(homeScreenJob.showPriceToDriver).toBe(true);
+      expect(homeScreenJob.driverPrice).toBe(200);
+      expect(homeScreenJob.formattedPrice).toBe("$200.00");
+    });
+
+    test("3. JobsScreen list job card displays $200.00 (NOT customer $300)", () => {
+      const jobsScreenJob = normalizeJob(rawJob00127, { _id: "driver_1" });
+
+      expect(jobsScreenJob.canShowPrice).toBe(true);
+      expect(jobsScreenJob.showPriceToDriver).toBe(true);
+      expect(jobsScreenJob.driverPrice).toBe(200);
+      expect(jobsScreenJob.formattedPrice).toBe("$200.00");
+    });
+
+    test("4. JobDetailScreen pre-start breakdown displays $200.00 with all line items", () => {
+      const driverEarnings = calculateDriverHourlyEarnings(rawJob00127.myAssignment, rawJob00127);
+
+      expect(driverEarnings.hourlyRate).toBe(100);
+      expect(driverEarnings.formattedHourlyRate).toBe("$100.00/hr");
+      expect(driverEarnings.minimumDuration).toBe(1);
+      expect(driverEarnings.formattedBaseDuration).toBe("1 Hr");
+      expect(driverEarnings.minimumCost).toBe(100);
+      expect(driverEarnings.formattedBaseAmount).toBe("$100.00");
+      expect(driverEarnings.calloutFee).toBe(50);
+      expect(driverEarnings.formattedCalloutFee).toBe("$50.00");
+      expect(driverEarnings.stairsFee).toBe(50);
+      expect(driverEarnings.formattedStairsFee).toBe("$50.00");
+      expect(driverEarnings.travelBackFee).toBe(0);
+      expect(driverEarnings.totalEstimatedCost).toBe(200);
+      expect(driverEarnings.formattedEstimatedTotal).toBe("$200.00");
+      expect(driverEarnings.overtimeAmount).toBe(0);
+      expect(driverEarnings.finalAmount).toBe(200);
+    });
+
+    test("5. Alias normalization: callOutFee, stairFee, totalEstimatedCost without double-counting", () => {
+      const rawJobWithAliases = {
+        _id: "job_00127_aliases",
+        jobNumber: "JOB-00127",
+        jobType: "moving",
+        status: "assigned",
+        showDriverPrice: true,
+        driverPriceType: "hourly",
+        totalAmount: 300,
+        hourlyRate: 100,
+        baseHours: 1,
+        minimumCost: 100,
+        callOutFee: 50,
+        stairFee: 50,
+        totalEstimatedCost: 200,
+      };
+
+      const summary = getJobPricingSummary(rawJobWithAliases);
+      expect(summary.calloutFee).toBe(50);
+      expect(summary.stairsFee).toBe(50);
+      expect(summary.totalEstimatedCost).toBe(200);
+      expect(summary.formattedTotalEstimatedCost).toBe("$200.00");
+    });
+
+    test("6. No double-counting when estimatedTotal and line items both exist", () => {
+      const jobWithBoth = {
+        jobNumber: "JOB-00127",
+        status: "assigned",
+        showDriverPrice: true,
+        driverPriceType: "hourly",
+        hourlyRate: 100,
+        baseHours: 1,
+        minimumCost: 100,
+        calloutCharge: 50,
+        stairsFee: 50,
+        estimatedTotal: 200,
+      };
+
+      const summary = getJobPricingSummary(jobWithBoth);
+      // Correct: $200 (NOT $200 + $50 + $50 = $300)
+      expect(summary.totalEstimatedCost).toBe(200);
+      expect(summary.finalAmount).toBe(200);
+    });
+  });
+
+  // ── SECTION 22: JOB-00130 Real Test Job ($1000 Base + $500 Callout + $500 Stairs = $2000 Estimated Total) ──
+  describe("JOB-00130 Real Test Job: Pricing Source Mismatch Resolution ($2000 Everywhere)", () => {
+    const rawJob00130 = {
+      _id: "job_00130_id",
+      jobNumber: "JOB-00130",
+      jobType: "moving",
+      status: "assigned",
+      showDriverPrice: true,
+      driverPriceType: "full", // Backend might return 'full' or default
+      totalAmount: 3000, // Customer gross booking total ($3000) - MUST NOT BE USED
+      driverPrice: 3000, // Old / gross driver price in backend payload - MUST NOT BE USED
+      estimatedTotal: 3000, // Customer estimate - MUST NOT BE USED
+      billing: {
+        totalAmount: 3000,
+        hourlyRate: 1000,
+        calloutCharge: 500,
+        stairsFee: 500,
+      },
+      pricing: {
+        hourlyRate: 1000,
+        estimatedHours: 1,
+        minimumLaborCost: 1000,
+        minimumCost: 1000,
+        calloutCharge: 500,
+        stairsFee: 500,
+      },
+      myAssignment: {
+        driverId: "driver_1",
+        status: "assigned",
+        pricing: {
+          hourlyRate: 1000,
+          baseHours: 1,
+        },
+      },
+    };
+
+    test("1. getJobPricingSummary returns exact required structure and $2000.00 totalEstimatedCost", () => {
+      const summary = getJobPricingSummary(rawJob00130, rawJob00130.myAssignment);
+
+      expect(summary.hourlyRate).toBe(1000);
+      expect(summary.minimumDuration).toBe(1);
+      expect(summary.minimumCost).toBe(1000);
+      expect(summary.calloutFee).toBe(500);
+      expect(summary.stairsFee).toBe(500);
+      expect(summary.travelBackFee).toBe(0);
+      expect(summary.totalEstimatedCost).toBe(2000); // 1000 + 500 + 500 = 2000 (NOT 3000!)
+      expect(summary.overtimeAmount).toBe(0);
+      expect(summary.finalAmount).toBe(2000);
+
+      expect(summary.formattedHourlyRate).toBe("$1000.00/hr");
+      expect(summary.formattedMinimumCost).toBe("$1000.00");
+      expect(summary.formattedCalloutFee).toBe("$500.00");
+      expect(summary.formattedStairsFee).toBe("$500.00");
+      expect(summary.formattedTotalEstimatedCost).toBe("$2000.00");
+      expect(summary.formattedEstimatedTotal).toBe("$2000.00");
+    });
+
+    test("2. HomeScreen pre-start job card displays $2000.00 (NOT $3000.00)", () => {
+      const homeScreenJob = normalizeJob(rawJob00130, { _id: "driver_1" });
+
+      expect(homeScreenJob.canShowPrice).toBe(true);
+      expect(homeScreenJob.showPriceToDriver).toBe(true);
+      expect(homeScreenJob.driverPrice).toBe(2000);
+      expect(homeScreenJob.formattedPrice).toBe("$2000.00");
+    });
+
+    test("3. JobsScreen list job card displays $2000.00 (NOT $3000.00)", () => {
+      const jobsScreenJob = normalizeJob(rawJob00130, { _id: "driver_1" });
+
+      expect(jobsScreenJob.canShowPrice).toBe(true);
+      expect(jobsScreenJob.showPriceToDriver).toBe(true);
+      expect(jobsScreenJob.driverPrice).toBe(2000);
+      expect(jobsScreenJob.formattedPrice).toBe("$2000.00");
+    });
+
+    test("4. JobDetailScreen breakdown displays $2000.00 with all line items", () => {
+      const driverEarnings = calculateDriverHourlyEarnings(rawJob00130.myAssignment, rawJob00130);
+
+      expect(driverEarnings.hourlyRate).toBe(1000);
+      expect(driverEarnings.formattedHourlyRate).toBe("$1000.00/hr");
+      expect(driverEarnings.minimumDuration).toBe(1);
+      expect(driverEarnings.formattedBaseDuration).toBe("1 Hr");
+      expect(driverEarnings.minimumCost).toBe(1000);
+      expect(driverEarnings.formattedBaseAmount).toBe("$1000.00");
+      expect(driverEarnings.calloutFee).toBe(500);
+      expect(driverEarnings.formattedCalloutFee).toBe("$500.00");
+      expect(driverEarnings.stairsFee).toBe(500);
+      expect(driverEarnings.formattedStairsFee).toBe("$500.00");
+      expect(driverEarnings.travelBackFee).toBe(0);
+      expect(driverEarnings.totalEstimatedCost).toBe(2000);
+      expect(driverEarnings.formattedEstimatedTotal).toBe("$2000.00");
+      expect(driverEarnings.overtimeAmount).toBe(0);
+      expect(driverEarnings.finalAmount).toBe(2000);
+    });
+
+    test("5. Starting the job does not alter base estimated price ($2000.00)", () => {
+      const inProgressAssignment = {
+        ...rawJob00130.myAssignment,
+        status: "in_progress",
+        isInProgress: true,
+        startedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+        totalWorkedMinutes: 10,
+      };
+
+      const runningJob = {
+        ...rawJob00130,
+        status: "in_progress",
+        startedAt: inProgressAssignment.startedAt,
+        myAssignment: inProgressAssignment,
+      };
+
+      const summary = getJobPricingSummary(runningJob, inProgressAssignment);
+      expect(summary.totalEstimatedCost).toBe(2000);
+      expect(summary.formattedTotalEstimatedCost).toBe("$2000.00");
+      expect(summary.overtimeAmount).toBe(0);
+      expect(summary.finalAmount).toBe(2000);
+    });
+  });
+});

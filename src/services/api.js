@@ -1,5 +1,4 @@
 import axios from "axios";
-import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 let authToken = null;
@@ -17,13 +16,87 @@ const baseURL =
   MANUAL_API_HOST ||
   "https://api.deliveryplus.tech/api";
 
-console.log("API baseURL:", baseURL);
+if (__DEV__) {
+  console.log("API baseURL:", baseURL);
+}
 
 const API = axios.create({
   baseURL,
+  timeout: 15000,
 });
 
+const sanitizeDiagnosticBody = (body) => {
+  const sensitiveKey =
+    /authorization|token|secret|password|credential|latitude|longitude|(^|_)lat($|_)|(^|_)lng($|_)|coordinate|currentlocation|phone|email|name|address|signature|photo|image|notes/i;
+
+  const sanitize = (value, key = "") => {
+    if (sensitiveKey.test(key)) {
+      return "[REDACTED]";
+    }
+
+    if (typeof value === "string") {
+      return value
+        .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]")
+        .slice(0, 1000);
+    }
+
+    if (Array.isArray(value)) {
+      return value.slice(0, 20).map((item) => sanitize(item));
+    }
+
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value)
+          .slice(0, 50)
+          .map(([childKey, childValue]) => [
+            childKey,
+            sanitize(childValue, childKey),
+          ])
+      );
+    }
+
+    return value;
+  };
+
+  return sanitize(body);
+};
+
+export const tryRequest = async (
+  requestFactory,
+  candidatePaths,
+  { logLabel = "request", allowNon404Failure = false } = {}
+) => {
+  let lastError = null;
+
+  for (const path of candidatePaths) {
+    try {
+      const result = await requestFactory(path);
+      return result;
+    } catch (error) {
+      lastError = error;
+      const status = error?.response?.status;
+      const message = error?.message || "request failed";
+
+      if (!allowNon404Failure && status && status !== 404 && status !== 405) {
+        throw error;
+      }
+
+      if (__DEV__) {
+        console.warn(`[${logLabel}] ${path} failed (${status || "network"}): ${message}`);
+      }
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+
+  throw new Error(`No successful ${logLabel} response found`);
+};
+
 API.interceptors.request.use(async (config) => {
+  config.metadata = { ...config.metadata, startedAt: Date.now() };
+
   if (!authToken) {
     try {
       authToken = await AsyncStorage.getItem(AUTH_TOKEN_KEY);
@@ -44,12 +117,33 @@ API.interceptors.request.use(async (config) => {
 
 API.interceptors.response.use(
   (response) => {
-    console.log("[API RESPONSE URL]:", response.config?.url);
-    console.log("[API RAW RESPONSE]:", JSON.stringify(response.data));
+    if (__DEV__ && response.config?.diagnosticOrigin) {
+      console.info("[API REQUEST SUCCESS]", {
+        origin: response.config.diagnosticOrigin,
+        method: response.config.method?.toUpperCase(),
+        url: API.getUri(response.config),
+        status: response.status,
+        elapsedMs: Date.now() - response.config.metadata?.startedAt,
+        responseBody: sanitizeDiagnosticBody(response.data),
+      });
+    }
     return response.data?.data ?? response.data;
   },
   (error) => {
-    console.log("[API ERROR]:", error.config?.url, error.response?.data);
+    if (__DEV__) {
+      const config = error.config || {};
+      const diagnostic = {
+        origin: config.diagnosticOrigin || "unattributed API call",
+        method: config.method?.toUpperCase() || "UNKNOWN",
+        url: config.url ? API.getUri(config) : "unavailable",
+        status: error.response?.status || "network",
+        elapsedMs: config.metadata?.startedAt
+          ? Date.now() - config.metadata.startedAt
+          : null,
+        responseBody: sanitizeDiagnosticBody(error.response?.data),
+      };
+      console.warn("[API REQUEST FAILURE]", JSON.stringify(diagnostic));
+    }
     return Promise.reject(error);
   }
 );
@@ -58,10 +152,26 @@ API.interceptors.response.use(
  * Persist and set authentication token & user data
  */
 export const setAuthToken = async (token, user = null) => {
+  const tokenChanged = authToken !== token;
+  if (authToken && tokenChanged) {
+    try {
+      const { stopDriverTrackingAndMarkOffline } = await import(
+        "./locationTrackingService"
+      );
+      await stopDriverTrackingAndMarkOffline();
+    } catch (error) {
+      console.warn("[LOCATION_UPLOAD_FAILED] offline before account change failed");
+    }
+  }
+
   authToken = token;
   try {
     if (token) {
       await AsyncStorage.setItem(AUTH_TOKEN_KEY, token);
+    }
+    if (tokenChanged && !user) {
+      currentUser = null;
+      await AsyncStorage.removeItem(AUTH_USER_KEY);
     }
     if (user) {
       currentUser = user;
@@ -127,9 +237,19 @@ export const getCurrentUser = () => currentUser;
  */
 export const clearAuthToken = async () => {
   try {
+    const { stopDriverTrackingAndMarkOffline } = await import(
+      "./locationTrackingService"
+    );
+    await stopDriverTrackingAndMarkOffline();
+  } catch (error) {
+    console.warn("[LOCATION_UPLOAD_FAILED] offline before logout failed");
+  }
+
+  try {
     // Unregister FCM device token before wiping auth session
-    const { unregisterDeviceToken } = await import("./notificationService");
+    const { unregisterDeviceToken, clearNotificationState } = await import("./notificationService");
     await unregisterDeviceToken();
+    clearNotificationState();
   } catch (err) {
     console.warn("[Auth] Error during device unregistration on logout:", err?.message);
   }

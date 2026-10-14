@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -16,6 +16,8 @@ import {
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import API, { clearAuthToken, getStoredUser } from "../services/api";
+import { updateCachedJob } from "../services/driverJobs";
+import { setDriverActiveJobTracking } from "../services/locationTrackingService";
 import AppIcon from "../components/common/AppIcon";
 import { normalizeJob } from "../utils/jobHelpers";
 
@@ -49,6 +51,7 @@ export default function StartJobAgreementScreen({ navigation, route }) {
     route?.params?.customerSignature || null
   );
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
   // Sync when returning from SignatureScreen
   useEffect(() => {
@@ -171,6 +174,8 @@ export default function StartJobAgreementScreen({ navigation, route }) {
       return;
     }
 
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
 
     try {
@@ -192,31 +197,23 @@ export default function StartJobAgreementScreen({ navigation, route }) {
 
       const user = await getStoredUser();
       const response = await API.post(`/jobs/${jobId}/start`, startPayload);
+      setDriverActiveJobTracking(true).catch(() => {
+        console.warn("[LOCATION_WATCH_STARTED] active-job interval update failed");
+      });
       const updatedRaw =
         response?.job || response?.data?.job || response?.data || response;
 
-      // Authoritative refresh: fetch fresh complete job from backend
-      let authoritativeJobData = null;
-      try {
-        const getFreshRes = await API.get(`/jobs/${jobId}`);
-        authoritativeJobData =
-          getFreshRes?.job || getFreshRes?.data?.job || getFreshRes?.data || getFreshRes;
-      } catch (getErr) {
-        console.warn("[StartJob] Could not refetch job after start, using merged fallback:", getErr?.message);
-      }
-
       let normalizedUpdatedJob = null;
-      const baseRaw = authoritativeJobData || job?.raw || job || {};
+      const baseRaw = job?.raw || job || {};
       const startedAt =
         updatedRaw?.startedAt ||
-        authoritativeJobData?.startedAt ||
-        authoritativeJobData?.jobStartedAt ||
         updatedRaw?.jobStartedAt ||
         new Date().toISOString();
 
       const merged = {
         ...job,
         ...baseRaw,
+        ...updatedRaw,
         status: "in_progress",
         startedAt,
         pricing: {
@@ -268,25 +265,34 @@ export default function StartJobAgreementScreen({ navigation, route }) {
       };
 
       normalizedUpdatedJob = normalizeJob(merged, user);
+      updateCachedJob(normalizedUpdatedJob);
 
       setSubmitting(false);
-      Alert.alert(
-        "Job Started!",
-        "Start agreement recorded successfully. The live timer is now active.",
-        [
-          {
-            text: "OK",
-            onPress: () => {
-              if (typeof route?.params?.onJobStarted === "function") {
-                route.params.onJobStarted(normalizedUpdatedJob);
-              }
-              navigation.goBack();
-            },
-          },
-        ]
-      );
+      submittingRef.current = false;
+
+      // Immediate transition to running job screen (< 100ms)
+      if (typeof route?.params?.onJobStarted === "function") {
+        route.params.onJobStarted(normalizedUpdatedJob);
+      }
+      navigation.goBack();
     } catch (error) {
+      submittingRef.current = false;
       setSubmitting(false);
+
+      if (error?.response?.status === 409) {
+        // Idempotency: job was already started on server. Recover cleanly.
+        try {
+          const user = await getStoredUser();
+          const fresh = await API.get(`/jobs/${jobId}`);
+          const freshJob = normalizeJob(fresh?.job || fresh?.data?.job || fresh, user);
+          updateCachedJob(freshJob);
+          if (typeof route?.params?.onJobStarted === "function") {
+            route.params.onJobStarted(freshJob);
+          }
+          navigation.goBack();
+          return;
+        } catch (e) { }
+      }
 
       if (error.response?.status === 401) {
         clearAuthToken();
@@ -580,14 +586,17 @@ export default function StartJobAgreementScreen({ navigation, route }) {
         <TouchableOpacity
           style={[
             styles.submitBtn,
-            !isFormValid && styles.submitBtnDisabled,
+            (!isFormValid || submitting) && styles.submitBtnDisabled,
           ]}
           onPress={handleConfirmAndStart}
           disabled={!isFormValid || submitting}
-          activeOpacity={0.85}
+          activeOpacity={0.7}
         >
           {submitting ? (
-            <ActivityIndicator color="#FFFFFF" size="small" />
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <ActivityIndicator color="#FFFFFF" size="small" />
+              <Text style={styles.submitBtnText}>Starting job...</Text>
+            </View>
           ) : (
             <>
               <Ionicons name="play-sharp" size={18} color="#FFF" />

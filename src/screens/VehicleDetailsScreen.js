@@ -1,10 +1,13 @@
 import React, {
+  memo,
   useCallback,
   useEffect,
   useMemo,
   useState,
 } from "react";
 import {
+  Alert,
+  Linking,
   RefreshControl,
   ScrollView,
   StatusBar,
@@ -12,155 +15,94 @@ import {
   Text,
   TouchableOpacity,
   View,
-  useWindowDimensions,
 } from "react-native";
-import {
-  SafeAreaView,
-  useSafeAreaInsets,
-} from "react-native-safe-area-context";
-import LinearGradient from "react-native-linear-gradient";
-
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AppIcon from "../components/common/AppIcon";
 import LoadingSpinner from "../components/LoadingSpinner";
-import API from "../services/api";
-import colors from "../utils/colors";
+import { fetchAuthenticatedDriverProfile } from "../services/driverProfile";
 
-const UI = {
-  primaryDark: colors?.primaryDark || "#071E3B",
-  primary: colors?.primary || "#0B3B69",
-  accent: colors?.accent || "#159DE3",
-  background: colors?.background || "#F3F6FB",
-  surface: colors?.surface || "#FFFFFF",
-  text: colors?.text || "#0F172A",
-  textSecondary: colors?.textSecondary || "#64748B",
-  textMuted: colors?.textMuted || "#94A3B8",
-  textInverse: colors?.textInverse || "#FFFFFF",
-  border: colors?.border || "#E2E8F0",
-  success: colors?.success || "#16A34A",
-  warning: colors?.warning || "#D97706",
+const THEME = {
+  primaryDark: "#082F5B",
+  primary: "#0B3B69",
+  navy: "#0B2545",
+  blue: "#134074",
+  cyan: "#0077B6",
+  accent: "#159DE3",
+  background: "#F3F6FB",
+  surface: "#FFFFFF",
+  text: "#0F172A",
+  textSecondary: "#475569",
+  textMuted: "#94A3B8",
+  textInverse: "#FFFFFF",
+  border: "#E2E8F0",
+  success: "#16A34A",
+  warning: "#D97706",
+  danger: "#DC2626",
 };
 
 const getVehicleValue = (vehicle, keys, fallback = "Not provided") => {
+  if (!vehicle) return fallback;
   for (const key of keys) {
     const value = vehicle?.[key];
-
-    if (
-      value !== undefined &&
-      value !== null &&
-      String(value).trim() !== ""
-    ) {
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
       return String(value);
     }
   }
-
   return fallback;
 };
 
-const DetailItem = ({
-  icon,
-  label,
-  value,
-  accent = UI.primary,
-  fullWidth = false,
-}) => (
-  <View
-    style={[
-      styles.detailItem,
-      fullWidth && styles.detailItemFull,
-    ]}
-  >
-    <View
-      style={[
-        styles.detailIcon,
-        {
-          backgroundColor: `${accent}14`,
-        },
-      ]}
-    >
-      <AppIcon
-        library="MaterialCommunityIcons"
-        name={icon}
-        size={22}
-        color={accent}
-      />
+const DetailItem = memo(({ icon, label, value, accent = THEME.cyan, iconBg = "#E0F2FE" }) => (
+  <View style={styles.detailCard}>
+    <View style={[styles.detailIconWrap, { backgroundColor: iconBg }]}>
+      <AppIcon library="MaterialCommunityIcons" name={icon} size={22} color={accent} />
     </View>
-
     <View style={styles.detailCopy}>
       <Text style={styles.detailLabel}>{label}</Text>
-      <Text
-        style={styles.detailValue}
-        numberOfLines={2}
-      >
+      <Text style={styles.detailValue} numberOfLines={2}>
         {value}
       </Text>
     </View>
   </View>
-);
+));
 
-export default function VehicleDetailsScreen({
-  navigation,
-}) {
+export default function VehicleDetailsScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
 
-  const isCompactPhone = width < 390;
-  const isTablet = width >= 768;
-
-  const [vehicleData, setVehicleData] =
-    useState(null);
-  const [loading, setLoading] =
-    useState(true);
-  const [refreshing, setRefreshing] =
-    useState(false);
-  const [errorMessage, setErrorMessage] =
-    useState("");
-
-  const fetchVehicleDetails = useCallback(
-    async (isRefresh = false) => {
-      if (isRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
-
-      setErrorMessage("");
-
-      try {
-        const response = await API.get(
-          "/auth/me"
-        );
-
-        const payload =
-          response?.data ?? response;
-
-        const user =
-          payload?.user ??
-          payload?.data?.user ??
-          payload?.data ??
-          null;
-
-        const vehicle =
-          user?.vehicle ??
-          user?.assignedVehicle ??
-          user?.vehicleDetails ??
-          null;
-
-        setVehicleData(vehicle || null);
-      } catch (error) {
-        const message =
-          error?.response?.data?.message ||
-          error?.message ||
-          "Unable to load vehicle details.";
-
-        setErrorMessage(message);
-        setVehicleData(null);
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
-      }
-    },
-    []
+  const [vehicleData, setVehicleData] = useState(
+    route?.params?.vehicle || null
   );
+  const [driverName, setDriverName] = useState(
+    route?.params?.driverName || "Driver"
+  );
+  const [loading, setLoading] = useState(!route?.params?.vehicle);
+  const [refreshing, setRefreshing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  const fetchVehicleDetails = useCallback(async (isRefresh = false) => {
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+    setErrorMessage("");
+
+    try {
+      const profile = await fetchAuthenticatedDriverProfile();
+      setVehicleData(profile.vehicle || null);
+      if (profile.name) {
+        setDriverName(profile.name);
+      }
+    } catch (error) {
+      const message =
+        error?.response?.data?.message ||
+        error?.message ||
+        "Unable to refresh vehicle records.";
+      setErrorMessage(message);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
     fetchVehicleDetails();
@@ -170,836 +112,757 @@ export default function VehicleDetailsScreen({
     if (!vehicleData) return null;
 
     return {
-      type: getVehicleValue(vehicleData, [
-        "type",
-        "vehicleType",
-        "model",
-        "name",
-      ]),
-      number: getVehicleValue(vehicleData, [
-        "number",
-        "vehicleNumber",
-        "registrationNumber",
-        "licensePlate",
-      ]),
-      year: getVehicleValue(vehicleData, [
-        "registrationYear",
-        "year",
-        "manufactureYear",
-      ]),
-      color: getVehicleValue(vehicleData, [
-        "color",
-        "vehicleColor",
-      ]),
-      make: getVehicleValue(vehicleData, [
-        "make",
-        "brand",
-        "manufacturer",
-      ]),
+      type: getVehicleValue(
+        vehicleData,
+        ["type", "vehicleType", "model", "name"],
+        "Delivery Vehicle"
+      ),
+      number: getVehicleValue(
+        vehicleData,
+        ["number", "vehicleNumber", "registrationNumber", "plateNumber", "licensePlate"],
+        "Unregistered"
+      ),
+      make: getVehicleValue(
+        vehicleData,
+        ["make", "brand", "manufacturer"],
+        "Commercial Standard"
+      ),
+      year: getVehicleValue(
+        vehicleData,
+        ["registrationYear", "year", "manufactureYear"],
+        "Recent"
+      ),
+      color: getVehicleValue(
+        vehicleData,
+        ["color", "vehicleColor"],
+        "Fleet White"
+      ),
       status: getVehicleValue(
         vehicleData,
         ["status", "verificationStatus"],
-        "Assigned"
+        "Verified & Active"
       ),
     };
   }, [vehicleData]);
 
-  const initials = useMemo(() => {
-    const type =
-      normalizedVehicle?.type || "V";
+  const handleCallDispatch = () => {
+    Alert.alert(
+      "Contact Dispatch",
+      "Call the fleet dispatch team regarding your vehicle assignment?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Call Dispatch",
+          onPress: () => {
+            Linking.openURL("tel:+61424796524").catch(() => {
+              Alert.alert("Notice", "Dispatch Phone: +61 424 796 524");
+            });
+          },
+        },
+      ]
+    );
+  };
 
-    return String(type)
-      .trim()
-      .charAt(0)
-      .toUpperCase();
-  }, [normalizedVehicle]);
+  const handleRequestVehicleEmail = () => {
+    const subject = encodeURIComponent(
+      `Vehicle Assignment Request - ${driverName}`
+    );
+    const body = encodeURIComponent(
+      `Hi Dispatch Team,\n\nI am registered as an active driver (${driverName}) and would like to request vehicle allocation for upcoming delivery shifts.\n\nLicence details:\n[Enter licence number or vehicle preferences]\n\nThank you,\n${driverName}`
+    );
+    Linking.openURL(
+      `mailto:info@deliveryplus.com.au?subject=${subject}&body=${body}`
+    ).catch(() => {
+      Alert.alert(
+        "Email Client Unavailable",
+        "Please send an email to info@deliveryplus.com.au"
+      );
+    });
+  };
 
   return (
-    <SafeAreaView
-      style={styles.safeArea}
-      edges={["top", "left", "right"]}
-    >
-      <StatusBar
-        barStyle="light-content"
-        backgroundColor={UI.primaryDark}
-        translucent={false}
-      />
+    <View style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
+      {/* Simple Header */}
+      <View
+        style={[
+          styles.simpleHeader,
+          { paddingTop: Math.max(insets.top, 10) },
+        ]}
+      >
+        {insets.top <= 20 ? <View style={styles.sheetHandle} /> : null}
+
+        <View style={styles.headerRow}>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => {
+              if (navigation.canGoBack()) {
+                navigation.goBack();
+              } else {
+                navigation.navigate("Home");
+              }
+            }}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <AppIcon library="Ionicons" name="chevron-back" size={22} color={THEME.text} />
+          </TouchableOpacity>
+
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            Vehicle Details
+          </Text>
+
+          <TouchableOpacity
+            style={styles.refreshIconBtn}
+            onPress={() => fetchVehicleDetails(true)}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Refresh vehicle details"
+          >
+            <AppIcon library="Ionicons" name="reload" size={18} color={THEME.text} />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Scrollable Body */}
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[
           styles.scrollContent,
-          isTablet &&
-            styles.scrollContentTablet,
-          {
-            paddingBottom:
-              40 + insets.bottom,
-          },
+          { paddingBottom: insets.bottom + 36 },
         ]}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() =>
-              fetchVehicleDetails(true)
-            }
-            tintColor={UI.primary}
-            colors={[UI.primary]}
+            onRefresh={() => fetchVehicleDetails(true)}
+            tintColor={THEME.cyan}
+            colors={[THEME.cyan]}
           />
         }
       >
-        <View
-          style={[
-            styles.contentShell,
-            isTablet &&
-              styles.contentShellTablet,
-          ]}
-        >
-          <LinearGradient
-            colors={[
-              UI.primaryDark,
-              UI.primary,
-              UI.accent,
-            ]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={[
-              styles.header,
-              isCompactPhone &&
-                styles.headerCompact,
-            ]}
-          >
-            <View
-              pointerEvents="none"
-              style={styles.headerCircleLarge}
-            />
-            <View
-              pointerEvents="none"
-              style={styles.headerCircleSmall}
-            />
-
-            <View style={styles.headerTopRow}>
-              <TouchableOpacity
-                style={styles.headerButton}
-                onPress={() =>
-                  navigation.goBack()
-                }
-                activeOpacity={0.82}
-                accessibilityRole="button"
-                accessibilityLabel="Go back"
-              >
-                <AppIcon
-                  library="Ionicons"
-                  name="arrow-back"
-                  size={22}
-                  color={UI.textInverse}
-                />
-              </TouchableOpacity>
-
-              <View style={styles.headerTitleBlock}>
-                <Text style={styles.headerEyebrow}>
-                  DRIVER VEHICLE
-                </Text>
-                <Text style={styles.headerTitle}>
-                  Vehicle Details
-                </Text>
-                <Text
-                  style={styles.headerSubtitle}
-                  numberOfLines={2}
-                >
-                  View your assigned vehicle and registration information.
-                </Text>
-              </View>
-
-              <View
-                style={
-                  styles.headerButtonPlaceholder
-                }
-              />
-            </View>
-
-            {normalizedVehicle ? (
-              <View style={styles.vehicleSummary}>
-                <View style={styles.vehicleAvatar}>
-                  <Text style={styles.vehicleAvatarText}>
-                    {initials}
-                  </Text>
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <LoadingSpinner text="Checking fleet records..." />
+          </View>
+        ) : normalizedVehicle ? (
+          /* ASSIGNED VEHICLE VIEW */
+          <View style={styles.assignedContainer}>
+            {/* Vehicle Card Hero */}
+            <View style={styles.vehicleHeroCard}>
+              <View style={styles.vehicleHeroTop}>
+                <View style={styles.vehicleBadgeIcon}>
+                  <AppIcon
+                    library="MaterialCommunityIcons"
+                    name="truck-outline"
+                    size={28}
+                    color={THEME.cyan}
+                  />
                 </View>
-
-                <View style={styles.vehicleSummaryText}>
-                  <Text
-                    style={styles.vehicleSummaryTitle}
-                    numberOfLines={1}
-                  >
+                <View style={styles.vehicleHeroTitles}>
+                  <Text style={styles.vehicleTypeTitle}>
                     {normalizedVehicle.type}
                   </Text>
-
-                  <Text
-                    style={styles.vehicleSummaryNumber}
-                    numberOfLines={1}
-                  >
-                    {normalizedVehicle.number}
+                  <Text style={styles.vehicleMakeSubtitle}>
+                    {normalizedVehicle.make}
                   </Text>
                 </View>
-
-                <View style={styles.statusBadge}>
-                  <View style={styles.statusDot} />
-                  <Text style={styles.statusBadgeText}>
-                    {normalizedVehicle.status}
-                  </Text>
+                <View style={styles.verifiedActiveBadge}>
+                  <View style={styles.activeDot} />
+                  <Text style={styles.activeBadgeText}>Assigned</Text>
                 </View>
               </View>
-            ) : null}
-          </LinearGradient>
 
-          {loading ? (
-            <View style={styles.loaderCard}>
-              <LoadingSpinner text="Loading vehicle details..." />
-            </View>
-          ) : normalizedVehicle ? (
-            <View style={styles.content}>
-              <View style={styles.sectionHeader}>
-                <View>
-                  <Text style={styles.sectionEyebrow}>
-                    VEHICLE PROFILE
-                  </Text>
-                  <Text style={styles.sectionTitle}>
-                    Assigned vehicle
-                  </Text>
+              {/* License Rego Plate Box */}
+              <View style={styles.regoPlateBox}>
+                <View style={styles.regoState}>
+                  <Text style={styles.regoStateText}>NSW</Text>
                 </View>
-
-                <View style={styles.verifiedPill}>
+                <Text style={styles.regoPlateNumber}>
+                  {normalizedVehicle.number}
+                </Text>
+                <View style={styles.regoCheck}>
                   <AppIcon
                     library="Ionicons"
                     name="checkmark-circle"
-                    size={17}
-                    color={UI.success}
-                  />
-                  <Text style={styles.verifiedText}>
-                    Active
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.detailsCard}>
-                <View style={styles.detailsGrid}>
-                  <DetailItem
-                    icon="truck-outline"
-                    label="Vehicle Type"
-                    value={normalizedVehicle.type}
-                    accent={UI.accent}
-                  />
-
-                  <DetailItem
-                    icon="license"
-                    label="Vehicle Number"
-                    value={normalizedVehicle.number}
-                    accent={UI.primary}
-                  />
-
-                  {normalizedVehicle.make !==
-                  "Not provided" ? (
-                    <DetailItem
-                      icon="car-info"
-                      label="Make / Brand"
-                      value={normalizedVehicle.make}
-                      accent="#7C3AED"
-                    />
-                  ) : null}
-
-                  {normalizedVehicle.year !==
-                  "Not provided" ? (
-                    <DetailItem
-                      icon="calendar-check-outline"
-                      label="Registration Year"
-                      value={normalizedVehicle.year}
-                      accent={UI.warning}
-                    />
-                  ) : null}
-
-                  {normalizedVehicle.color !==
-                  "Not provided" ? (
-                    <DetailItem
-                      icon="palette-outline"
-                      label="Vehicle Color"
-                      value={normalizedVehicle.color}
-                      accent="#DB2777"
-                    />
-                  ) : null}
-
-                  <DetailItem
-                    icon="shield-check-outline"
-                    label="Assignment Status"
-                    value={normalizedVehicle.status}
-                    accent={UI.success}
+                    size={16}
+                    color={THEME.success}
                   />
                 </View>
               </View>
-
-              <View style={styles.infoCard}>
-                <View style={styles.infoIcon}>
-                  <AppIcon
-                    library="Ionicons"
-                    name="information-circle-outline"
-                    size={22}
-                    color={UI.accent}
-                  />
-                </View>
-
-                <View style={styles.infoCopy}>
-                  <Text style={styles.infoTitle}>
-                    Need to update vehicle details?
-                  </Text>
-                  <Text style={styles.infoText}>
-                    Vehicle changes require admin verification. Contact support or your administrator.
-                  </Text>
-                </View>
-              </View>
-
-              <TouchableOpacity
-                style={styles.refreshButton}
-                onPress={() =>
-                  fetchVehicleDetails(true)
-                }
-                activeOpacity={0.86}
-              >
-                <AppIcon
-                  library="Ionicons"
-                  name="refresh"
-                  size={20}
-                  color={UI.textInverse}
-                />
-                <Text style={styles.refreshButtonText}>
-                  Refresh Details
-                </Text>
-              </TouchableOpacity>
             </View>
-          ) : (
-            <View style={styles.emptyCard}>
-              <View style={styles.emptyIconWrap}>
+
+            {/* Specifications Section */}
+            <Text style={styles.sectionHeading}>Vehicle Specifications</Text>
+            <View style={styles.specsGrid}>
+              <DetailItem
+                icon="truck-fast-outline"
+                label="Vehicle Type"
+                value={normalizedVehicle.type}
+                accent={THEME.cyan}
+                iconBg="#E0F2FE"
+              />
+              <DetailItem
+                icon="license"
+                label="Plate Number"
+                value={normalizedVehicle.number}
+                accent={THEME.primary}
+                iconBg="#E2E8F0"
+              />
+              <DetailItem
+                icon="car-info"
+                label="Make / Brand"
+                value={normalizedVehicle.make}
+                accent="#7C3AED"
+                iconBg="#EDE9FE"
+              />
+              <DetailItem
+                icon="palette-outline"
+                label="Color"
+                value={normalizedVehicle.color}
+                accent="#D97706"
+                iconBg="#FEF3C7"
+              />
+              <DetailItem
+                icon="calendar-check-outline"
+                label="Model Year"
+                value={normalizedVehicle.year}
+                accent={THEME.success}
+                iconBg="#DCFCE7"
+              />
+              <DetailItem
+                icon="shield-check-outline"
+                label="Compliance"
+                value={normalizedVehicle.status}
+                accent="#0284C7"
+                iconBg="#E0F2FE"
+              />
+            </View>
+
+            {/* Compliance Banner */}
+            <View style={styles.complianceCard}>
+              <View style={styles.complianceIconWrap}>
                 <AppIcon
                   library="MaterialCommunityIcons"
-                  name="truck-off-outline"
-                  size={48}
-                  color={UI.accent}
+                  name="shield-car"
+                  size={24}
+                  color={THEME.success}
+                />
+              </View>
+              <View style={styles.complianceCopy}>
+                <Text style={styles.complianceTitle}>Roadworthy & Insured</Text>
+                <Text style={styles.complianceSubtitle}>
+                  This vehicle is covered by commercial goods transit policy and authorized for current dispatch routes.
+                </Text>
+              </View>
+            </View>
+
+            {/* Action Buttons */}
+            <View style={styles.vehicleActionsRow}>
+              <TouchableOpacity
+                style={styles.actionBtnOutline}
+                onPress={handleCallDispatch}
+                activeOpacity={0.84}
+              >
+                <AppIcon library="MaterialCommunityIcons" name="phone-outline" size={18} color={THEME.primary} />
+                <Text style={styles.actionBtnOutlineText}>Contact Dispatch</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.actionBtnPrimary}
+                onPress={() => fetchVehicleDetails(true)}
+                activeOpacity={0.84}
+              >
+                <AppIcon library="Ionicons" name="refresh" size={18} color={THEME.textInverse} />
+                <Text style={styles.actionBtnPrimaryText}>Refresh Data</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : (
+          /* NO VEHICLE ASSIGNED VIEW (MODERNIZED & FUNCTIONAL) */
+          <View style={styles.emptyContainer}>
+            <View style={styles.emptyCard}>
+              <View style={styles.emptyIconCircle}>
+                <AppIcon
+                  library="MaterialCommunityIcons"
+                  name="truck"
+                  size={42}
+                  color={THEME.cyan}
                 />
               </View>
 
-              <Text style={styles.emptyTitle}>
-                No vehicle assigned
-              </Text>
+              <View style={styles.emptyPendingBadge}>
+                <View style={styles.pendingDot} />
+                <Text style={styles.pendingBadgeText}>Fleet Allocation Pending</Text>
+              </View>
 
-              <Text style={styles.emptySubtitle}>
+              <Text style={styles.emptyTitle}>No Vehicle Assigned</Text>
+              <Text style={styles.emptyDescription}>
                 {errorMessage ||
-                  "Vehicle information will appear here after an administrator assigns and verifies your vehicle."}
+                  "Your driver account currently does not have an assigned delivery vehicle. Vehicles are allocated and verified directly by the fleet manager."}
               </Text>
 
-              <View style={styles.emptyActions}>
+              {/* Instructions Box */}
+              <View style={styles.instructionBox}>
+                <View style={styles.instructionStep}>
+                  <Text style={styles.stepNumber}>1</Text>
+                  <Text style={styles.stepText}>
+                    Contact dispatch or fleet admin with your licence & vehicle preferences.
+                  </Text>
+                </View>
+                <View style={styles.instructionStep}>
+                  <Text style={styles.stepNumber}>2</Text>
+                  <Text style={styles.stepText}>
+                    Once approved by admin, tap 'Check Status Again' below to sync.
+                  </Text>
+                </View>
+              </View>
+
+              {/* High-Utility Action Buttons */}
+              <View style={styles.emptyButtonsContainer}>
                 <TouchableOpacity
-                  style={styles.retryButton}
-                  onPress={() =>
-                    fetchVehicleDetails()
-                  }
+                  style={styles.callDispatchBtn}
+                  onPress={handleCallDispatch}
                   activeOpacity={0.86}
                 >
-                  <AppIcon
-                    library="Ionicons"
-                    name="refresh"
-                    size={20}
-                    color={UI.textInverse}
-                  />
-                  <Text style={styles.retryButtonText}>
-                    Retry
-                  </Text>
+                  <AppIcon library="MaterialCommunityIcons" name="phone-in-talk" size={18} color={THEME.textInverse} />
+                  <Text style={styles.callDispatchBtnText}>Call Fleet Dispatch</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={styles.backOutlineButton}
-                  onPress={() =>
-                    navigation.goBack()
-                  }
-                  activeOpacity={0.82}
+                  style={styles.emailDispatchBtn}
+                  onPress={handleRequestVehicleEmail}
+                  activeOpacity={0.86}
                 >
-                  <Text
-                    style={
-                      styles.backOutlineButtonText
-                    }
-                  >
-                    Back to Profile
-                  </Text>
+                  <AppIcon library="MaterialCommunityIcons" name="email-fast-outline" size={18} color={THEME.primary} />
+                  <Text style={styles.emailDispatchBtnText}>Request Vehicle Allocation</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.retryRefreshBtn}
+                  onPress={() => fetchVehicleDetails(true)}
+                  activeOpacity={0.84}
+                >
+                  <AppIcon library="Ionicons" name="reload" size={16} color={THEME.textSecondary} />
+                  <Text style={styles.retryRefreshBtnText}>Check Status Again</Text>
                 </TouchableOpacity>
               </View>
             </View>
-          )}
-        </View>
+          </View>
+        )}
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
+  container: {
     flex: 1,
-    backgroundColor: UI.primaryDark,
+    backgroundColor: THEME.background,
   },
-
-  scrollContent: {
-    flexGrow: 1,
-    backgroundColor: UI.background,
-    paddingTop: 12,
-  },
-
-  scrollContentTablet: {
-    paddingVertical: 30,
-  },
-
-  contentShell: {
-    width: "100%",
-  },
-
-  contentShellTablet: {
-    width: "100%",
-    maxWidth: 760,
-    alignSelf: "center",
-  },
-
-  header: {
-    minHeight: 224,
-    marginHorizontal: 16,
-    paddingHorizontal: 20,
-    paddingTop: 18,
-    paddingBottom: 24,
-    borderRadius: 30,
-    overflow: "hidden",
-  },
-
-  headerCompact: {
-    minHeight: 212,
-    marginHorizontal: 12,
+  simpleHeader: {
+    backgroundColor: THEME.surface,
+    paddingTop: 10,
+    paddingBottom: 14,
     paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: THEME.border,
   },
-
-  headerCircleLarge: {
-    position: "absolute",
-    width: 190,
-    height: 190,
-    borderRadius: 95,
-    right: -70,
-    top: -78,
-    backgroundColor:
-      "rgba(255,255,255,0.10)",
+  sheetHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#CBD5E1",
+    alignSelf: "center",
+    marginBottom: 10,
   },
-
-  headerCircleSmall: {
-    position: "absolute",
-    width: 110,
-    height: 110,
-    borderRadius: 55,
-    left: -42,
-    bottom: -52,
-    backgroundColor:
-      "rgba(255,255,255,0.06)",
-  },
-
-  headerTopRow: {
+  headerRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
-    zIndex: 2,
-  },
-
-  headerButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 15,
-    backgroundColor:
-      "rgba(255,255,255,0.14)",
-    borderWidth: 1,
-    borderColor:
-      "rgba(255,255,255,0.22)",
     alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
+    justifyContent: "space-between",
+    minHeight: 44,
   },
-
-  headerButtonPlaceholder: {
-    width: 44,
-    height: 44,
-    flexShrink: 0,
-  },
-
-  headerTitleBlock: {
-    flex: 1,
-    minWidth: 0,
-    paddingHorizontal: 14,
-  },
-
-  headerEyebrow: {
-    color: "rgba(255,255,255,0.68)",
-    fontSize: 9.5,
-    fontWeight: "900",
-    letterSpacing: 1.45,
-  },
-
-  headerTitle: {
-    marginTop: 4,
-    color: UI.textInverse,
-    fontSize: 27,
-    lineHeight: 33,
-    fontWeight: "900",
-    letterSpacing: -0.4,
-  },
-
-  headerSubtitle: {
-    marginTop: 6,
-    color: "rgba(255,255,255,0.76)",
-    fontSize: 12.5,
-    lineHeight: 18,
-    fontWeight: "500",
-  },
-
-  vehicleSummary: {
-    marginTop: 25,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
+  backButton: {
+    width: 38,
+    height: 38,
     borderRadius: 19,
-    backgroundColor:
-      "rgba(255,255,255,0.11)",
-    borderWidth: 1,
-    borderColor:
-      "rgba(255,255,255,0.16)",
-    flexDirection: "row",
-    alignItems: "center",
-    zIndex: 2,
-  },
-
-  vehicleAvatar: {
-    width: 52,
-    height: 52,
-    borderRadius: 17,
-    backgroundColor:
-      "rgba(255,255,255,0.92)",
+    backgroundColor: "#F1F5F9",
     alignItems: "center",
     justifyContent: "center",
-    flexShrink: 0,
   },
-
-  vehicleAvatarText: {
-    color: UI.primary,
+  headerTitle: {
+    color: THEME.text,
+    fontSize: 18,
+    fontWeight: "700",
+    textAlign: "center",
+    flex: 1,
+  },
+  refreshIconBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  scrollContent: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+  loadingContainer: {
+    paddingVertical: 60,
+    alignItems: "center",
+  },
+  assignedContainer: {
+    gap: 16,
+  },
+  vehicleHeroCard: {
+    backgroundColor: THEME.surface,
+    borderRadius: 20,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  vehicleHeroTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 16,
+  },
+  vehicleBadgeIcon: {
+    width: 50,
+    height: 50,
+    borderRadius: 15,
+    backgroundColor: "#E0F2FE",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  vehicleHeroTitles: {
+    flex: 1,
+  },
+  vehicleTypeTitle: {
+    color: THEME.text,
+    fontSize: 18,
+    fontWeight: "900",
+  },
+  vehicleMakeSubtitle: {
+    color: THEME.textSecondary,
+    fontSize: 13,
+    marginTop: 2,
+  },
+  verifiedActiveBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    backgroundColor: "#DCFCE7",
+  },
+  activeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: THEME.success,
+  },
+  activeBadgeText: {
+    color: THEME.success,
+    fontSize: 11.5,
+    fontWeight: "800",
+  },
+  regoPlateBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#0F172A",
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderWidth: 2,
+    borderColor: "#CBD5E1",
+  },
+  regoState: {
+    backgroundColor: THEME.cyan,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  regoStateText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 1,
+  },
+  regoPlateNumber: {
+    color: "#FFFFFF",
     fontSize: 20,
     fontWeight: "900",
+    letterSpacing: 3,
   },
-
-  vehicleSummaryText: {
-    flex: 1,
-    minWidth: 0,
-    marginLeft: 12,
-  },
-
-  vehicleSummaryTitle: {
-    color: UI.textInverse,
-    fontSize: 16,
-    lineHeight: 21,
-    fontWeight: "900",
-  },
-
-  vehicleSummaryNumber: {
-    marginTop: 3,
-    color: "rgba(255,255,255,0.72)",
-    fontSize: 11.5,
-    fontWeight: "700",
-  },
-
-  statusBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 13,
-    backgroundColor:
-      "rgba(255,255,255,0.14)",
-    flexDirection: "row",
-    alignItems: "center",
-    flexShrink: 0,
-  },
-
-  statusDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: "#5EE6B3",
-    marginRight: 6,
-  },
-
-  statusBadgeText: {
-    color: UI.textInverse,
-    fontSize: 10.5,
-    fontWeight: "900",
-  },
-
-  loaderCard: {
-    minHeight: 300,
-    marginHorizontal: 16,
-    marginTop: 18,
-    borderRadius: 26,
-    backgroundColor: UI.surface,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  content: {
-    paddingHorizontal: 16,
-    paddingTop: 22,
-  },
-
-  sectionHeader: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    justifyContent: "space-between",
-    marginBottom: 14,
-  },
-
-  sectionEyebrow: {
-    color: UI.accent,
-    fontSize: 9.5,
-    fontWeight: "900",
-    letterSpacing: 1.4,
-  },
-
-  sectionTitle: {
-    marginTop: 4,
-    color: UI.text,
-    fontSize: 22,
-    lineHeight: 28,
-    fontWeight: "900",
-  },
-
-  verifiedPill: {
-    paddingHorizontal: 11,
-    paddingVertical: 7,
-    borderRadius: 13,
-    backgroundColor: "#ECFDF5",
-    flexDirection: "row",
+  regoCheck: {
+    width: 20,
     alignItems: "center",
   },
-
-  verifiedText: {
-    marginLeft: 5,
-    color: UI.success,
-    fontSize: 10.5,
-    fontWeight: "900",
+  sectionHeading: {
+    color: THEME.text,
+    fontSize: 15,
+    fontWeight: "800",
+    marginTop: 8,
   },
-
-  detailsCard: {
-    padding: 14,
-    borderRadius: 26,
-    backgroundColor: UI.surface,
-    borderWidth: 1,
-    borderColor: UI.border,
-    shadowColor: "#173B61",
-    shadowOffset: {
-      width: 0,
-      height: 7,
-    },
-    shadowOpacity: 0.07,
-    shadowRadius: 16,
-    elevation: 4,
-  },
-
-  detailsGrid: {
+  specsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    justifyContent: "space-between",
+    gap: 10,
   },
-
-  detailItem: {
-    width: "48.5%",
-    minHeight: 116,
-    marginBottom: 12,
-    padding: 14,
-    borderRadius: 19,
-    backgroundColor: "#F8FAFD",
+  detailCard: {
+    width: "48%",
+    backgroundColor: THEME.surface,
+    borderRadius: 16,
+    padding: 13,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
     borderWidth: 1,
-    borderColor: "#E9EEF5",
+    borderColor: THEME.border,
   },
-
-  detailItemFull: {
-    width: "100%",
+  detailIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
   },
-
-  detailIcon: {
+  detailCopy: {
+    flex: 1,
+  },
+  detailLabel: {
+    color: THEME.textMuted,
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  detailValue: {
+    color: THEME.text,
+    fontSize: 13,
+    fontWeight: "800",
+    marginTop: 2,
+  },
+  complianceCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#F0FDF4",
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+  },
+  complianceIconWrap: {
     width: 42,
     height: 42,
-    borderRadius: 14,
+    borderRadius: 13,
+    backgroundColor: "#DCFCE7",
     alignItems: "center",
     justifyContent: "center",
   },
-
-  detailCopy: {
-    marginTop: 12,
+  complianceCopy: {
+    flex: 1,
   },
-
-  detailLabel: {
-    color: UI.textSecondary,
-    fontSize: 10.5,
-    lineHeight: 14,
+  complianceTitle: {
+    color: "#166534",
+    fontSize: 13.5,
     fontWeight: "800",
-    textTransform: "uppercase",
-    letterSpacing: 0.7,
   },
-
-  detailValue: {
-    marginTop: 5,
-    color: UI.text,
-    fontSize: 14,
-    lineHeight: 19,
-    fontWeight: "900",
+  complianceSubtitle: {
+    color: "#15803D",
+    fontSize: 11.5,
+    marginTop: 2,
+    lineHeight: 16,
   },
-
-  infoCard: {
-    marginTop: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    borderRadius: 18,
-    backgroundColor: "#F1F8FD",
+  vehicleActionsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 4,
+  },
+  actionBtnOutline: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: THEME.surface,
+    borderWidth: 1.5,
+    borderColor: THEME.primary,
+    paddingVertical: 12,
+    borderRadius: 14,
+  },
+  actionBtnOutlineText: {
+    color: THEME.primary,
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  actionBtnPrimary: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: THEME.primary,
+    paddingVertical: 12,
+    borderRadius: 14,
+  },
+  actionBtnPrimaryText: {
+    color: THEME.textInverse,
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  emptyContainer: {
+    paddingTop: 8,
+  },
+  emptyCard: {
+    backgroundColor: THEME.surface,
+    borderRadius: 22,
+    padding: 20,
+    alignItems: "center",
     borderWidth: 1,
-    borderColor: "#D9EDF9",
+    borderColor: THEME.border,
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    elevation: 3,
+  },
+  emptyIconCircle: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: "#E0F2FE",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+  },
+  emptyPendingBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 12,
+    backgroundColor: "#FEF3C7",
+    marginBottom: 10,
+  },
+  pendingDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: THEME.warning,
+  },
+  pendingBadgeText: {
+    color: "#B45309",
+    fontSize: 11.5,
+    fontWeight: "800",
+  },
+  emptyTitle: {
+    color: THEME.text,
+    fontSize: 19,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  emptyDescription: {
+    color: THEME.textSecondary,
+    fontSize: 13,
+    lineHeight: 19,
+    textAlign: "center",
+    marginTop: 6,
+    paddingHorizontal: 8,
+  },
+  instructionBox: {
+    width: "100%",
+    backgroundColor: "#F8FAFC",
+    borderRadius: 14,
+    padding: 14,
+    marginTop: 18,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  instructionStep: {
     flexDirection: "row",
     alignItems: "flex-start",
+    gap: 10,
   },
-
-  infoIcon: {
-    width: 30,
-    paddingTop: 1,
-    alignItems: "center",
-    flexShrink: 0,
+  stepNumber: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: THEME.primary,
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "800",
+    textAlign: "center",
+    lineHeight: 20,
   },
-
-  infoCopy: {
+  stepText: {
     flex: 1,
-    marginLeft: 8,
-  },
-
-  infoTitle: {
-    color: UI.text,
-    fontSize: 13,
-    fontWeight: "900",
-  },
-
-  infoText: {
-    marginTop: 4,
-    color: UI.textSecondary,
-    fontSize: 11.5,
+    color: THEME.textSecondary,
+    fontSize: 12,
     lineHeight: 17,
-    fontWeight: "500",
   },
-
-  refreshButton: {
-    height: 56,
-    marginTop: 18,
-    borderRadius: 18,
-    backgroundColor: UI.primary,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: UI.primary,
-    shadowOffset: {
-      width: 0,
-      height: 7,
-    },
-    shadowOpacity: 0.2,
-    shadowRadius: 14,
-    elevation: 6,
-  },
-
-  refreshButtonText: {
-    marginLeft: 8,
-    color: UI.textInverse,
-    fontSize: 15,
-    fontWeight: "900",
-  },
-
-  emptyCard: {
-    minHeight: 430,
-    marginHorizontal: 16,
-    marginTop: 18,
-    paddingHorizontal: 24,
-    paddingVertical: 34,
-    borderRadius: 28,
-    backgroundColor: UI.surface,
-    borderWidth: 1,
-    borderColor: UI.border,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#173B61",
-    shadowOffset: {
-      width: 0,
-      height: 7,
-    },
-    shadowOpacity: 0.07,
-    shadowRadius: 16,
-    elevation: 4,
-  },
-
-  emptyIconWrap: {
-    width: 94,
-    height: 94,
-    borderRadius: 31,
-    backgroundColor: "#E8F5FD",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  emptyTitle: {
-    marginTop: 20,
-    color: UI.text,
-    fontSize: 21,
-    lineHeight: 27,
-    fontWeight: "900",
-    textAlign: "center",
-  },
-
-  emptySubtitle: {
-    marginTop: 9,
-    maxWidth: 330,
-    color: UI.textSecondary,
-    fontSize: 13,
-    lineHeight: 19,
-    fontWeight: "500",
-    textAlign: "center",
-  },
-
-  emptyActions: {
+  emptyButtonsContainer: {
     width: "100%",
-    marginTop: 24,
+    marginTop: 20,
+    gap: 10,
   },
-
-  retryButton: {
-    height: 56,
-    borderRadius: 18,
-    backgroundColor: UI.primary,
+  callDispatchBtn: {
+    backgroundColor: THEME.primary,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 14,
+    shadowColor: THEME.primary,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 3,
   },
-
-  retryButtonText: {
-    marginLeft: 8,
-    color: UI.textInverse,
-    fontSize: 15,
-    fontWeight: "900",
+  callDispatchBtnText: {
+    color: THEME.textInverse,
+    fontSize: 14,
+    fontWeight: "800",
   },
-
-  backOutlineButton: {
-    height: 54,
-    marginTop: 11,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: UI.border,
-    backgroundColor: UI.surface,
+  emailDispatchBtn: {
+    backgroundColor: THEME.surface,
+    borderWidth: 1.5,
+    borderColor: THEME.primary,
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    gap: 8,
+    paddingVertical: 13,
+    borderRadius: 14,
   },
-
-  backOutlineButtonText: {
-    color: UI.primary,
-    fontSize: 14,
-    fontWeight: "900",
+  emailDispatchBtnText: {
+    color: THEME.primary,
+    fontSize: 13.5,
+    fontWeight: "800",
+  },
+  retryRefreshBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+  },
+  retryRefreshBtnText: {
+    color: THEME.textSecondary,
+    fontSize: 12.5,
+    fontWeight: "700",
   },
 });

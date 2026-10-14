@@ -7,7 +7,6 @@ import SplashScreen from "../screens/SplashScreen";
 import SignInScreen from "../screens/SignInScreen";
 import SignUpScreen from "../screens/SignUpScreen";
 import JobDetailScreen from "../screens/JobDetailScreen";
-import EditProfileScreen from "../screens/EditProfileScreen";
 import SignatureScreen from "../screens/SignatureScreen";
 import OTPLoginScreen from "../screens/OTPLoginScreen";
 import DeliveryHistoryScreen from "../screens/DeliveryHistoryScreen";
@@ -135,11 +134,6 @@ export default function AppNavigator() {
             options={{ headerShown: false }}
           />
 
-          <Stack.Screen
-            name="EditProfile"
-            component={EditProfileScreen}
-            options={{ headerShown: false }}
-          />
 
           <Stack.Screen
             name="VehicleDetails"

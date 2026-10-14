@@ -3,7 +3,9 @@ const { startCommand, bundleCommand } = require('@react-native/community-cli-plu
 module.exports = {
   commands: [startCommand, bundleCommand],
   project: {
-    ios: {},
+    ios: {
+      automaticPodsInstallation: false,
+    },
     android: {},
   },
   assets: ['./src/assets/fonts/'],
