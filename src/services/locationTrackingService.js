@@ -118,7 +118,7 @@ export const requestDriverLocationPermission = async () => {
 
   if (Platform.OS === "android") {
     permissionPromptPromise = requestNativeLocationPermission({
-      requireBackground: true,
+      requireBackground: false,
     }).then((result) => Boolean(result?.granted)).finally(() => {
       permissionPromptPromise = null;
     });
@@ -186,7 +186,8 @@ const uploadLocation = async (payload, token) => {
     return false;
   }
 
-  console.info("[LOCATION_UPLOAD_STARTED]");
+  const startTime = Date.now();
+  console.info("GPS_UPLOAD_REQUESTED", { lat: payload.latitude, lng: payload.longitude });
   try {
     await tryRequest(
       async (path) => API.post(
@@ -207,6 +208,11 @@ const uploadLocation = async (payload, token) => {
 
     lastSuccessfulUploadAt = Date.now();
     lastSuccessfulCoordinates = payload;
+    console.info("GPS_UPLOAD_ACCEPTED", {
+      lat: payload.latitude,
+      lng: payload.longitude,
+      durationMs: Date.now() - startTime,
+    });
     console.info("[LOCATION_UPLOAD_SUCCESS]");
     return true;
   } catch (error) {
@@ -267,6 +273,11 @@ const queueLocation = async (location) => {
     return;
   }
 
+  console.info("GPS_CAPTURED", {
+    lat: payload.latitude,
+    lng: payload.longitude,
+    timestamp: new Date().toISOString(),
+  });
   console.info("[LOCATION_FIX_RECEIVED]");
   const now = Date.now();
   const minimumInterval = activeJob ? 12000 : 45000;

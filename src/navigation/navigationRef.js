@@ -28,12 +28,26 @@ export function setPendingNotificationTarget(name, params) {
 }
 
 /**
- * Called when NavigationContainer is ready to flush any queued notification target.
+ * Check if a pending notification target is queued.
+ */
+export function hasPendingNotificationTarget() {
+  return pendingNotificationTarget !== null;
+}
+
+/**
+ * Retrieve the current pending notification target without clearing it.
+ */
+export function getPendingNotificationTarget() {
+  return pendingNotificationTarget;
+}
+
+/**
+ * Called when NavigationContainer is ready or after authentication is restored to flush any queued notification target.
  */
 export function flushPendingNotificationTarget() {
   if (pendingNotificationTarget && navigationRef.isReady()) {
     const { name, params } = pendingNotificationTarget;
-    console.log("[Navigation] Flushing queued notification target:", name, params);
+    console.info("[Navigation] Flushing queued notification target:", name, params);
     pendingNotificationTarget = null;
     setTimeout(() => {
       try {
@@ -41,6 +55,6 @@ export function flushPendingNotificationTarget() {
       } catch (err) {
         console.warn("[Navigation] Failed to flush queued target:", err?.message);
       }
-    }, 300);
+    }, 350);
   }
 }

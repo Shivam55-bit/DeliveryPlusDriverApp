@@ -32,7 +32,7 @@ try {
             body: remoteMessage.data.body || "New update received",
             data: remoteMessage.data || {},
             android: {
-              channelId: remoteMessage.data.channelId || "jobs_urgent",
+              channelId: remoteMessage.data.channelId || "delivery-plus",
               importance: 4, // AndroidImportance.HIGH
               pressAction: {
                 id: "default",

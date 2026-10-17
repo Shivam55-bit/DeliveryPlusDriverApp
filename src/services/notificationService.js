@@ -316,11 +316,57 @@ export const markAllDriverNotificationsAsRead = async () => {
 };
 
 /**
+ * Verifies that an incoming notification payload was explicitly addressed to
+ * the currently logged-in driver user ID, rejecting cross-account leakages.
+ */
+export const isNotificationForCurrentDriver = async (remoteMessage) => {
+  if (!remoteMessage?.data) return true;
+  const { recipientUserId, recipientDriverId } = remoteMessage.data;
+  if (!recipientUserId && !recipientDriverId) return true; // Legacy untagged payload
+
+  try {
+    const user = await getStoredUser();
+    if (!user) return false;
+
+    const currentUserId = String(user._id || user.id || "");
+    const currentDriverId = String(user.driverId || user._id || user.id || "");
+
+    if (recipientUserId && String(recipientUserId) !== currentUserId) {
+      console.warn("[Push] Security drop: recipientUserId does not match active driver", {
+        payloadUserId: recipientUserId,
+        currentUserId,
+      });
+      return false;
+    }
+
+    if (
+      recipientDriverId &&
+      String(recipientDriverId) !== currentDriverId &&
+      String(recipientDriverId) !== currentUserId
+    ) {
+      console.warn("[Push] Security drop: recipientDriverId does not match active driver", {
+        payloadDriverId: recipientDriverId,
+        currentDriverId,
+      });
+      return false;
+    }
+
+    return true;
+  } catch {
+    return true;
+  }
+};
+
+/**
  * Adds an incoming foreground push message directly into the inbox store,
  * updating unread badges and reconciling with the server.
  */
 export const addForegroundNotification = async (remoteMessage) => {
   if (!remoteMessage) return;
+
+  const isForMe = await isNotificationForCurrentDriver(remoteMessage);
+  if (!isForMe) return;
+
   const data = remoteMessage.data || {};
   const notification = remoteMessage.notification || {};
 
@@ -373,6 +419,16 @@ export const addForegroundNotification = async (remoteMessage) => {
 
   // Reconcile authoritative populated records in background
   fetchDriverNotifications({ force: true }).catch(() => {});
+
+  // If notification is job-related, invalidate and refresh assigned jobs list
+  if (newItem.jobId || data?.jobNumber || String(data?.type || "").toUpperCase().includes("JOB")) {
+    import("./driverJobs")
+      .then(({ invalidateDriverJobsCache, fetchDriverJobs }) => {
+        invalidateDriverJobsCache();
+        fetchDriverJobs("foreground_notification_push", { force: true }).catch(() => {});
+      })
+      .catch(() => {});
+  }
 };
 
 /**
@@ -404,6 +460,12 @@ export const getSafeMessaging = () => {
 };
 
 export const NOTIFICATION_CHANNELS = {
+  DELIVERY_PLUS: {
+    id: "delivery-plus",
+    name: "DeliveryPlus Notifications",
+    importance: AndroidImportance.HIGH,
+    vibration: true,
+  },
   JOBS_URGENT: {
     id: "jobs_urgent",
     name: "Job Assignments & Urgent Alerts",
@@ -438,6 +500,14 @@ export const createNotificationChannels = async () => {
 
   try {
     if (notifee?.createChannel) {
+      await notifee.createChannel({
+        id: NOTIFICATION_CHANNELS.DELIVERY_PLUS.id,
+        name: NOTIFICATION_CHANNELS.DELIVERY_PLUS.name,
+        importance: NOTIFICATION_CHANNELS.DELIVERY_PLUS.importance,
+        vibration: true,
+        sound: "default",
+      });
+
       await notifee.createChannel({
         id: NOTIFICATION_CHANNELS.JOBS_URGENT.id,
         name: NOTIFICATION_CHANNELS.JOBS_URGENT.name,
@@ -654,15 +724,15 @@ export const unregisterDeviceToken = async () => {
   }
 };
 
-/**
- * Resolves notification payload into a navigation action.
- */
-export const handleNotificationNavigation = (remoteMessage) => {
-  if (!remoteMessage) return;
-
-  const data = remoteMessage.data || {};
+const executeNavigation = (data, remoteMessage) => {
   const jobId = data.jobId || data.id || data._id;
   const type = (data.type || data.notificationType || "").toUpperCase();
+
+  console.info("NOTIFICATION_TAPPED", {
+    messageId: remoteMessage?.messageId || data._id || null,
+    jobId: jobId ? String(jobId) : null,
+    type,
+  });
 
   if (jobId) {
     navigate("JobDetail", { jobId, id: jobId });
@@ -678,15 +748,69 @@ export const handleNotificationNavigation = (remoteMessage) => {
 };
 
 /**
+ * Resolves notification payload into a navigation action.
+ * Stage: NOTIFICATION_TAPPED
+ */
+export const handleNotificationNavigation = (remoteMessage) => {
+  if (!remoteMessage) return;
+
+  const data = remoteMessage.data || {};
+  const recipientUserId = data.recipientUserId;
+  const recipientDriverId = data.recipientDriverId;
+
+  if (recipientUserId || recipientDriverId) {
+    getStoredUser().then((user) => {
+      const currentUserId = String(user?._id || user?.id || "");
+      const currentDriverId = String(user?.driverId || user?._id || user?.id || "");
+      if (recipientUserId && String(recipientUserId) !== currentUserId) {
+        console.warn("[Push] Security drop: notification belongs to another driver.");
+        return;
+      }
+      if (
+        recipientDriverId &&
+        String(recipientDriverId) !== currentDriverId &&
+        String(recipientDriverId) !== currentUserId
+      ) {
+        console.warn("[Push] Security drop: notification belongs to another driver.");
+        return;
+      }
+      executeNavigation(data, remoteMessage);
+    }).catch(() => {
+      executeNavigation(data, remoteMessage);
+    });
+    return;
+  }
+
+  executeNavigation(data, remoteMessage);
+};
+
+/**
  * Shows a foreground heads-up banner using Notifee.
+ * Stage: LOCAL_NOTIFICATION_DISPLAYED
  */
 export const displayForegroundNotification = async (remoteMessage) => {
   try {
     if (!notifee?.displayNotification) return;
 
-    const { notification, data } = remoteMessage;
-    const title = notification?.title || data?.title || "DeliveryPlus Driver";
-    const body = notification?.body || data?.body || "You have a new update.";
+    const isForMe = await isNotificationForCurrentDriver(remoteMessage);
+    if (!isForMe) {
+      console.warn("[Push] Security drop: notification belongs to another driver, banner suppressed.");
+      return;
+    }
+
+    const { notification, data = {} } = remoteMessage || {};
+    let title = notification?.title || data?.title || "DeliveryPlus Driver";
+    let body = notification?.body || data?.body || "You have a new update.";
+
+    // If job number or pickup info is provided, enrich notification content
+    if (data?.jobNumber && !title.includes(data.jobNumber)) {
+      title = `${data.jobNumber} • ${title}`;
+    }
+    const pickupInfo = data?.pickup || data?.pickupAddress;
+    if (pickupInfo && !body.includes(pickupInfo)) {
+      body = `${body} • Pickup: ${pickupInfo}`;
+    }
+
     const channelId = data?.channelId || NOTIFICATION_CHANNELS.JOBS_URGENT.id;
 
     await notifee.displayNotification({
@@ -700,14 +824,23 @@ export const displayForegroundNotification = async (remoteMessage) => {
           id: "default",
         },
         smallIcon: "ic_launcher",
+        sound: "default",
+        vibrationPattern: [300, 500],
       },
       ios: {
         foregroundPresentationOptions: {
           banner: true,
           badge: true,
           sound: true,
+          list: true,
         },
       },
+    });
+
+    console.info("LOCAL_NOTIFICATION_DISPLAYED", {
+      messageId: remoteMessage.messageId || data._id || null,
+      channelId,
+      title,
     });
   } catch (err) {
     console.warn("[Push] Failed to display foreground notification:", err?.message);
@@ -747,12 +880,22 @@ export const initNotifications = async () => {
       // 2. Foreground Message Listener
       if (typeof RNFBMessaging.onMessage === "function") {
         unsubscribeForeground = RNFBMessaging.onMessage(messagingInstance, async (remoteMessage) => {
+          console.info("APP_MESSAGE_RECEIVED", {
+            messageId: remoteMessage.messageId || remoteMessage.data?._id || null,
+            type: remoteMessage.data?.type || null,
+            title: remoteMessage.notification?.title || remoteMessage.data?.title || null,
+          });
           logPushDebugDetails("FOREGROUND", remoteMessage);
           await displayForegroundNotification(remoteMessage);
           await addForegroundNotification(remoteMessage);
         });
       } else if (typeof messagingInstance.onMessage === "function") {
         unsubscribeForeground = messagingInstance.onMessage(async (remoteMessage) => {
+          console.info("APP_MESSAGE_RECEIVED", {
+            messageId: remoteMessage.messageId || remoteMessage.data?._id || null,
+            type: remoteMessage.data?.type || null,
+            title: remoteMessage.notification?.title || remoteMessage.data?.title || null,
+          });
           logPushDebugDetails("FOREGROUND", remoteMessage);
           await displayForegroundNotification(remoteMessage);
           await addForegroundNotification(remoteMessage);
@@ -782,13 +925,7 @@ export const initNotifications = async () => {
 
       if (initialNotification) {
         logPushDebugDetails("KILLED/LAUNCH", initialNotification);
-        const data = initialNotification.data || {};
-        const jobId = data.jobId || data.id || data._id;
-        if (jobId) {
-          setPendingNotificationTarget("JobDetail", { jobId, id: jobId });
-        } else {
-          setPendingNotificationTarget("Notifications", {});
-        }
+        handleNotificationNavigation(initialNotification);
       }
     }
 
@@ -815,11 +952,13 @@ export const initNotifications = async () => {
           notification: notifeeInitial.notification,
           data: notifeeInitial.notification.data,
         });
-        const data = notifeeInitial.notification.data || {};
-        const jobId = data.jobId || data.id || data._id;
-        if (jobId) {
-          setPendingNotificationTarget("JobDetail", { jobId, id: jobId });
-        }
+        handleNotificationNavigation({
+          data: notifeeInitial.notification.data,
+          notification: {
+            title: notifeeInitial.notification.title,
+            body: notifeeInitial.notification.body,
+          },
+        });
       }
     }
 

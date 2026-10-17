@@ -35,6 +35,7 @@ import {
   formatScheduledTime,
   isJobScheduledOnDate,
 } from "../utils/jobHelpers";
+import { isJobRecentCompleted } from "../utils/completedJobsFilter";
 
 // ── Design Tokens ─────────────────────────────────────────────
 const C = {
@@ -249,6 +250,8 @@ export default function JobsScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [jobLoadError, setJobLoadError] = useState(false);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [currentTime, setCurrentTime] = useState(Date.now());
   const fetchingJobsRef = useRef(false);
 
   const fetchJobs = useCallback(async (isManualRefresh = false) => {
@@ -257,6 +260,7 @@ export default function JobsScreen({ navigation }) {
     if (isManualRefresh) setRefreshing(true);
     try {
       const user = await getStoredUser();
+      setCurrentUser(user);
       const rawJobs = await fetchDriverJobs("JobsScreen.fetchJobs");
       setJobs(
         rawJobs
@@ -336,12 +340,45 @@ export default function JobsScreen({ navigation }) {
     };
   }, [jobs, fetchJobs]);
 
+  // Periodic 30-second re-evaluation timer and AppState resume handler for 24h job expiry
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 30000);
+
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") {
+        setCurrentTime(Date.now());
+        fetchJobs();
+      }
+    });
+
+    return () => {
+      clearInterval(timer);
+      subscription?.remove();
+    };
+  }, [fetchJobs]);
+
   const onPullRefresh = useCallback(() => {
     fetchJobs(true);
   }, [fetchJobs]);
 
   const filteredJobs = useMemo(() => {
+    const driverId = currentUser?._id || currentUser?.id;
     return jobs.filter((job) => {
+      const isCompleted = job.status === "completed";
+      const isRecent = isJobRecentCompleted(job.raw || job, currentTime, driverId);
+
+      // If active filter is "Completed", must be completed AND within 24 hours
+      if (activeFilter === "Completed" && (!isCompleted || !isRecent)) {
+        return false;
+      }
+
+      // If active filter is "All", completed jobs older than 24 hours automatically disappear
+      if (activeFilter === "All" && isCompleted && !isRecent) {
+        return false;
+      }
+
       const matchFilter =
         activeFilter === "All" ||
         (activeFilter === "Pending" &&
@@ -349,14 +386,14 @@ export default function JobsScreen({ navigation }) {
         (activeFilter === "In Transit" && job.status === "inTransit") ||
         (activeFilter === "Arrived" && job.status === "arrived") ||
         (activeFilter === "Started" && job.status === "started") ||
-        (activeFilter === "Completed" && job.status === "completed");
+        (activeFilter === "Completed" && isCompleted && isRecent);
 
       const searchText = `${job.name} ${job.id} ${job.pickup} ${job.drop}`.toLowerCase();
       const matchSearch = searchText.includes(search.toLowerCase());
 
       return matchFilter && matchSearch;
     });
-  }, [activeFilter, search, jobs]);
+  }, [activeFilter, search, jobs, currentTime, currentUser]);
 
   const handleCallCustomer = (phone) => {
     if (!phone) return;

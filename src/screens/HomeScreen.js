@@ -37,6 +37,7 @@ import AppIcon from "../components/common/AppIcon";
 import LoadingSpinner from "../components/LoadingSpinner";
 import IosDashboardHeader from "../components/IosDashboardHeader";
 import JobTimerBanner from "../components/JobTimerBanner";
+import { isJobRecentCompleted } from "../utils/completedJobsFilter";
 import API, {
   getStoredUser,
   clearAuthToken,
@@ -116,20 +117,6 @@ const getAndroidLocationPermissionDialog = (status) => {
         : "DeliveryPlus uses your location while you are online so dispatch can follow active deliveries. Choose Continue to allow location while using the app. Approximate location is supported; precise is more accurate.",
       canContinue: !permanentlyDenied,
       canOpenSettings: permanentlyDenied,
-      settingsForDeviceLocation: false,
-    };
-  }
-
-  if (!status?.backgroundGranted && Number(status?.androidVersion) >= 29) {
-    const precisionMessage = status.precision === "approximate"
-      ? " Android currently allows approximate location; choose precise location in Settings for more reliable tracking."
-      : "";
-    return {
-      step: "background",
-      title: "Background location required",
-      message: `To keep dispatch updated while you are online with the app in the background or your screen locked, open Settings > Permissions > Location and choose "Allow all the time". Android requires this to be enabled separately.${precisionMessage}`,
-      canContinue: false,
-      canOpenSettings: true,
       settingsForDeviceLocation: false,
     };
   }
@@ -1107,7 +1094,9 @@ const HomeScreen = ({ navigation }) => {
             );
           const completedJobs =
             normalisedJobs.filter(
-              (job) => job.status === "completed"
+              (job) =>
+                job.status === "completed" &&
+                isJobRecentCompleted(job.raw || job, Date.now(), user?._id || user?.id)
             );
 
           // Show all in-progress jobs (running) and upcoming jobs (not started yet)

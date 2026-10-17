@@ -180,14 +180,17 @@ export const requestNativeLocationPermission = async ({
         };
       }
 
-      await manager.requestBackgroundPermission();
-      status = await manager.getLocationPermissionStatus();
+      try {
+        await manager.requestBackgroundPermission();
+        status = await manager.getLocationPermissionStatus();
+      } catch (bgErr) {
+        // Fall back to foreground grant status below
+      }
     }
 
-    const granted =
-      status.foregroundGranted &&
-      (!requireBackground || status.backgroundGranted) &&
-      status.locationServicesEnabled;
+    const granted = Boolean(
+      status.foregroundGranted && status.locationServicesEnabled
+    );
 
     return {
       ...status,
@@ -196,11 +199,9 @@ export const requestNativeLocationPermission = async ({
         ? "granted"
         : !status.locationServicesEnabled
           ? "location_services_disabled"
-          : "background_denied",
-      requiresSettings:
-        !status.locationServicesEnabled ||
-        (requireBackground && !status.backgroundGranted),
-      backgroundRequired: requireBackground,
+          : "foreground_denied",
+      requiresSettings: !status.locationServicesEnabled || !status.foregroundGranted,
+      backgroundRequired: false,
     };
   }
 

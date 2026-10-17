@@ -11,6 +11,7 @@ import {
 import colors from "../utils/colors";
 
 import API, { getStoredAuthToken, getStoredUser, setAuthToken, clearAuthToken } from "../services/api";
+import { hasPendingNotificationTarget, flushPendingNotificationTarget } from "../navigation/navigationRef";
 
 const { width } = Dimensions.get("window");
 
@@ -84,6 +85,11 @@ export default function SplashScreen({ navigation }) {
             }
             setTimeout(() => {
               navigation.replace("Home");
+              if (hasPendingNotificationTarget()) {
+                setTimeout(() => {
+                  flushPendingNotificationTarget();
+                }, 400);
+              }
             }, 1200);
             return;
           } catch (tokenErr) {

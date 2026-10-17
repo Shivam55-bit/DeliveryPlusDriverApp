@@ -121,11 +121,6 @@ class DriverLocationService : Service() {
     if (!coarseGranted && !preciseGranted) {
       throw SecurityException("Foreground location permission is required")
     }
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-      !hasPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
-    ) {
-      throw SecurityException("Background location permission is required")
-    }
 
     val manager =
       getSystemService(Context.LOCATION_SERVICE) as? LocationManager

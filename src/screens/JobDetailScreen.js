@@ -119,6 +119,19 @@ export default function JobDetailScreen({ route, navigation }) {
       const rawData = response.job || response.data?.job || response;
       if (rawData) {
         const normalized = normalizeJob(rawData, user);
+
+        // Security assertion: Reject viewing if not assigned to this job
+        if (user?.role === "driver" && !normalized?.myAssignment?.isAssigned) {
+          Alert.alert(
+            "Access Restricted",
+            "This job is not assigned to your driver account.",
+            [{ text: "OK", onPress: () => navigation.goBack() }]
+          );
+          setLoading(false);
+          setRefreshing(false);
+          return;
+        }
+
         setJob((prevJob) => {
           // Preserve ongoing work session timer & agreement state so timer does not reset
           if (prevJob?.myAssignment?.startedAt && !normalized?.myAssignment?.startedAt) {
@@ -136,6 +149,13 @@ export default function JobDetailScreen({ route, navigation }) {
         clearAuthToken();
         Alert.alert("Session Expired", "Please login again.", [
           { text: "OK", onPress: () => navigation.reset({ index: 0, routes: [{ name: "Login" }] }) },
+        ]);
+        return;
+      }
+
+      if (error.response?.status === 403) {
+        Alert.alert("Access Restricted", "You are not authorized to view this job.", [
+          { text: "OK", onPress: () => navigation.goBack() },
         ]);
         return;
       }
