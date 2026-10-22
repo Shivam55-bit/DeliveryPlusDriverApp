@@ -166,3 +166,46 @@ export const fetchDriverJobs = async (origin, { force = false } = {}) => {
 
   return inFlightJobsPromise;
 };
+
+const inFlightSingleJobPromises = new Map();
+const singleJobCache = new Map();
+const SINGLE_JOB_TTL_MS = 10000;
+
+/**
+ * High-performance fetch for a single job with in-flight request deduplication and memory caching.
+ * Prevents multiple concurrent requests to GET /jobs/${jobId}.
+ */
+export const fetchJobById = async (jobId, { force = false, origin = "driverJobs.fetchJobById" } = {}) => {
+  if (!jobId) return null;
+  const key = String(jobId).toLowerCase();
+  const now = Date.now();
+
+  const cached = singleJobCache.get(key);
+  if (!force && cached && now - cached.timestamp < SINGLE_JOB_TTL_MS) {
+    return cached.data;
+  }
+
+  const existingInFlight = inFlightSingleJobPromises.get(key);
+  if (existingInFlight && !force) {
+    return existingInFlight;
+  }
+
+  const promise = (async () => {
+    try {
+      const response = await API.get(`/jobs/${jobId}`, {
+        diagnosticOrigin: origin,
+      });
+      const rawData = response?.job || response?.data?.job || response;
+      if (rawData) {
+        singleJobCache.set(key, { data: rawData, timestamp: Date.now() });
+        updateCachedJob(rawData);
+      }
+      return rawData;
+    } finally {
+      inFlightSingleJobPromises.delete(key);
+    }
+  })();
+
+  inFlightSingleJobPromises.set(key, promise);
+  return promise;
+};

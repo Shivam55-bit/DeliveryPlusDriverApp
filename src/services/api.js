@@ -153,6 +153,14 @@ API.interceptors.response.use(
  */
 export const setAuthToken = async (token, user = null) => {
   const tokenChanged = authToken !== token;
+  const userChanged =
+    Boolean(user) !== Boolean(currentUser) ||
+    (user && currentUser && (user._id !== currentUser._id || user.id !== currentUser.id || user.email !== currentUser.email || user.role !== currentUser.role));
+
+  if (!tokenChanged && !userChanged && authToken && currentUser) {
+    return;
+  }
+
   if (authToken && tokenChanged) {
     try {
       const { stopDriverTrackingAndMarkOffline } = await import(
@@ -166,19 +174,19 @@ export const setAuthToken = async (token, user = null) => {
 
   authToken = token;
   try {
-    if (token) {
+    if (token && tokenChanged) {
       await AsyncStorage.setItem(AUTH_TOKEN_KEY, token);
     }
     if (tokenChanged && !user) {
       currentUser = null;
       await AsyncStorage.removeItem(AUTH_USER_KEY);
     }
-    if (user) {
+    if (user && (userChanged || tokenChanged)) {
       currentUser = user;
       await AsyncStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
     }
 
-    // Trigger FCM device registration in background
+    // Trigger FCM device registration in background on valid session
     if (token) {
       import("./notificationService").then(({ registerDeviceToken }) => {
         registerDeviceToken().catch(() => {});

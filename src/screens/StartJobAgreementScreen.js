@@ -15,6 +15,7 @@ import {
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import API, { clearAuthToken, getStoredUser } from "../services/api";
 import { updateCachedJob } from "../services/driverJobs";
 import { setDriverActiveJobTracking } from "../services/locationTrackingService";
@@ -266,6 +267,7 @@ export default function StartJobAgreementScreen({ navigation, route }) {
 
       normalizedUpdatedJob = normalizeJob(merged, user);
       updateCachedJob(normalizedUpdatedJob);
+      AsyncStorage.setItem("@delivery_plus_driver_shift_online", "online").catch(() => {});
 
       setSubmitting(false);
       submittingRef.current = false;

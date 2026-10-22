@@ -50,15 +50,22 @@ const isGuestSession = (token, user) => {
   );
 };
 
-const isUserOnline = (user) => {
+const isUserOnline = (user, hasActiveJob = false) => {
+  if (hasActiveJob) {
+    return true;
+  }
   const onlineFlag = user?.isOnline ?? user?.online;
   if (typeof onlineFlag === "boolean") {
     return onlineFlag;
   }
 
-  return ["available", "online"].includes(
-    String(user?.availability || "").trim().toLowerCase()
-  );
+  const rawAvailability = String(user?.availability || user?.status || "").trim().toLowerCase();
+  const explicitOffline = ["offline", "inactive", "off_duty", "off-duty", "deactivated", "suspended"];
+  if (explicitOffline.includes(rawAvailability)) {
+    return false;
+  }
+
+  return true;
 };
 
 export const buildLocationPayload = (location) => {
@@ -147,7 +154,7 @@ export const requestDriverLocationPermission = async () => {
     }
 
     try {
-      const result = await requestNativeLocationPermission({ requireBackground: true });
+      const result = await requestNativeLocationPermission({ requireBackground: false });
       const granted = Boolean(result?.granted);
 
       if (__DEV__) {
@@ -360,15 +367,14 @@ const startTracking = async ({
   const token = (await getStoredAuthToken()) || getAuthToken();
   const storedUser = user || (await getStoredUser());
 
+  const nextActiveJob = Boolean(isActiveJob);
   if (
     isGuestSession(token, storedUser) ||
-    (!serverConfirmedOnline && !isUserOnline(storedUser))
+    (!serverConfirmedOnline && !isUserOnline(storedUser, nextActiveJob))
   ) {
     await deactivateTracking();
     return false;
   }
-
-  const nextActiveJob = Boolean(isActiveJob);
   if (trackingEnabled && activeSessionToken === token) {
     const androidStatus = Platform.OS === "android" ? await getAndroidLocationPermissionStatus().catch(() => null) : null;
     const serviceRunning =
@@ -434,6 +440,9 @@ export const startDriverLocationTracking = (options = {}) => {
 export const setDriverActiveJobTracking = async (isActiveJob) => {
   activeJob = Boolean(isActiveJob);
   if (!trackingEnabled) {
+    if (isActiveJob) {
+      await startTracking({ isActiveJob: true, serverConfirmedOnline: true, permissionGranted: true });
+    }
     return;
   }
 

@@ -24,6 +24,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import LinearGradient from "react-native-linear-gradient";
@@ -104,6 +105,86 @@ const DRIVER_AVAILABILITY_ENDPOINTS = [
   "/driver/me/availability",
 ];
 
+const SHIFT_ONLINE_KEY = "@delivery_plus_driver_shift_online";
+
+export const computeDriverOnlineStatus = ({
+  profileData,
+  homeJobs = [],
+  persistedShift = null,
+}) => {
+  // 1. If driver currently has an active delivery in progress, they are unequivocally ONLINE
+  const hasActiveJob = (homeJobs || []).some(
+    (job) =>
+      job.status === "inProgress" ||
+      job.status === "in_progress" ||
+      job.myAssignment?.isInProgress
+  );
+  if (hasActiveJob) {
+    return true;
+  }
+
+  // 2. If the user explicitly toggled offline in this session and has no active job
+  if (persistedShift === "offline") {
+    return false;
+  }
+
+  // 3. If driver explicitly toggled online during their shift, stay online across jobs
+  if (persistedShift === "online") {
+    return true;
+  }
+
+  const rawAvailability = String(
+    profileData?.availability || profileData?.status || ""
+  ).trim().toLowerCase();
+
+  // Explicit offline states
+  const explicitOfflineStates = [
+    "offline",
+    "inactive",
+    "off_duty",
+    "off-duty",
+    "deactivated",
+    "suspended",
+  ];
+  if (explicitOfflineStates.includes(rawAvailability)) {
+    return false;
+  }
+
+  // Active / working / shift states are all ONLINE:
+  // "available", "online", "busy", "on_job", "on_duty", "on-duty", "working", "in_progress", "assigned", "completed"
+  if (
+    [
+      "available",
+      "online",
+      "busy",
+      "on_job",
+      "on_duty",
+      "on-duty",
+      "working",
+      "in_progress",
+      "assigned",
+      "completed",
+    ].includes(rawAvailability)
+  ) {
+    return true;
+  }
+
+  // 4. Check boolean flags from profile ONLY if truthy, or if no rawAvailability is specified
+  if (profileData?.isOnline === true || profileData?.online === true) {
+    return true;
+  }
+
+  // Only consider boolean false if there is no explicit positive availability status
+  if (profileData?.isOnline === false || profileData?.online === false) {
+    if (!rawAvailability || explicitOfflineStates.includes(rawAvailability)) {
+      return false;
+    }
+  }
+
+  // Default to online if logged in and not explicitly offline
+  return rawAvailability !== "offline";
+};
+
 const getAndroidLocationPermissionDialog = (status) => {
   if (!status?.foregroundGranted) {
     const permanentlyDenied = Boolean(status?.foregroundPermanentlyDenied);
@@ -113,8 +194,10 @@ const getAndroidLocationPermissionDialog = (status) => {
         ? "Location access is blocked"
         : "Location permission required",
       message: permanentlyDenied
-        ? "Enable location for DeliveryPlus in Android app settings. Approximate location is supported; precise location provides more reliable driver tracking."
-        : "DeliveryPlus uses your location while you are online so dispatch can follow active deliveries. Choose Continue to allow location while using the app. Approximate location is supported; precise is more accurate.",
+        ? (Platform.OS === "ios"
+            ? "Enable location for DeliveryPlus in Settings. Precise location provides reliable driver tracking."
+            : "Enable location for DeliveryPlus in Android app settings. Approximate location is supported; precise location provides more reliable driver tracking.")
+        : "DeliveryPlus uses your location while you are online so dispatch can follow active deliveries. Choose Continue to allow location while using the app.",
       canContinue: !permanentlyDenied,
       canOpenSettings: permanentlyDenied,
       settingsForDeviceLocation: false,
@@ -125,7 +208,9 @@ const getAndroidLocationPermissionDialog = (status) => {
     return {
       step: "services",
       title: "Turn on device location",
-      message: "Android Location services are turned off. Enable device location, then return here and try again.",
+      message: Platform.OS === "ios"
+        ? "iOS Location Services are turned off. Enable Location Services in Settings, then return here."
+        : "Android Location services are turned off. Enable device location, then return here and try again.",
       canContinue: false,
       canOpenSettings: true,
       settingsForDeviceLocation: true,
@@ -133,6 +218,91 @@ const getAndroidLocationPermissionDialog = (status) => {
   }
 
   return null;
+};
+
+export const getApiErrorInfo = (error) => {
+  if (!error) return null;
+
+  const status = error?.response?.status;
+  const isAxios = Boolean(error?.isAxiosError || error?.config);
+  const code = error?.code;
+  const message = error?.message || "";
+
+  // 1. HTTP Status Responses
+  if (status === 401) {
+    return {
+      title: "Session Expired",
+      banner: "Session expired. Please log in again.",
+      detail: "Your session has expired. Please log in again to continue.",
+      isNetwork: false,
+    };
+  }
+  if (status === 403) {
+    return {
+      title: "Access Restricted",
+      banner: "Access restricted. Contact dispatch.",
+      detail: "Your account does not have permission to view assigned jobs. Contact dispatch.",
+      isNetwork: false,
+    };
+  }
+  if (status === 404) {
+    return {
+      title: "Endpoint Not Found",
+      banner: "Jobs service endpoint was not found.",
+      detail: "The driver jobs service endpoint is temporarily unavailable (404).",
+      isNetwork: false,
+    };
+  }
+  if (status === 429) {
+    return {
+      title: "Rate Limit Exceeded",
+      banner: "Too many requests. Please wait a moment.",
+      detail: "Rate limit exceeded. Please wait a moment before refreshing.",
+      isNetwork: false,
+    };
+  }
+  if (status >= 500) {
+    return {
+      title: "Server Error",
+      banner: "Server temporarily unavailable. Try again later.",
+      detail: "The server encountered an issue. Tap retry to try again.",
+      isNetwork: false,
+    };
+  }
+
+  // 2. Timeout
+  if (code === "ECONNABORTED" || message.toLowerCase().includes("timeout")) {
+    return {
+      title: "Request Timed Out",
+      banner: "Request timed out. Please check your connection.",
+      detail: "The server took too long to respond. Check your connection and retry.",
+      isNetwork: true,
+    };
+  }
+
+  // 3. Genuine Network Failure (Axios request dispatched but no response received)
+  if (
+    isAxios &&
+    (!error.response ||
+      code === "ERR_NETWORK" ||
+      message === "Network Error" ||
+      code === "ENOTFOUND")
+  ) {
+    return {
+      title: "Network Unavailable",
+      banner: "Network unavailable. Check your connection.",
+      detail: "Unable to connect to the server. Check your internet connection and retry.",
+      isNetwork: true,
+    };
+  }
+
+  // 4. Non-Network / JavaScript Exception / Data Parsing Error
+  return {
+    title: "Application Error",
+    banner: "Unable to process driver jobs.",
+    detail: message ? `Application error: ${message}` : "An unexpected error occurred while loading jobs.",
+    isNetwork: false,
+  };
 };
 
 const updateDriverAvailability = async (isOnline, diagnosticOrigin) => {
@@ -971,6 +1141,7 @@ const HomeScreen = ({ navigation }) => {
   const locationWarningShownRef = useRef(false);
   const suppressAutomaticTrackingRef = useRef(false);
   const offlineReconciliationNeededRef = useRef(false);
+  const shiftPreferenceRef = useRef(null);
 
   const showToast = useCallback(
     (message, type = "success") => {
@@ -1007,6 +1178,13 @@ const HomeScreen = ({ navigation }) => {
 
       // 1. Immediately hydrate cached user profile & jobs for instant display (< 100ms)
       try {
+        const persistedShift =
+          (await AsyncStorage.getItem(SHIFT_ONLINE_KEY).catch(() => null)) ||
+          shiftPreferenceRef.current;
+        if (persistedShift) {
+          shiftPreferenceRef.current = persistedShift;
+        }
+
         const cachedUser = await getStoredUser();
         if (cachedUser && isMountedRef.current) {
           setProfile((prev) => prev || cachedUser);
@@ -1019,6 +1197,12 @@ const HomeScreen = ({ navigation }) => {
           setJobs((prev) => (prev && prev.length > 0 ? prev : cachedNormalised));
           setLoading(false);
           hasLoadedJobsRef.current = true;
+          const initialOnline = computeDriverOnlineStatus({
+            profileData: cachedUser,
+            homeJobs: cachedNormalised,
+            persistedShift: shiftPreferenceRef.current,
+          });
+          setIsOnline(initialOnline);
         }
       } catch (e) { }
 
@@ -1061,6 +1245,8 @@ const HomeScreen = ({ navigation }) => {
           }
         }
 
+        let homeJobs = jobs || [];
+
         if (jobResult.error) {
           if (isMountedRef.current) {
             setJobLoadError(jobResult.error);
@@ -1092,15 +1278,22 @@ const HomeScreen = ({ navigation }) => {
             normalisedJobs.filter(
               (job) => job.status === "upcoming"
             );
+          const driverId =
+            profileData?._id ||
+            profileData?.id ||
+            profile?._id ||
+            profile?.id ||
+            null;
+
           const completedJobs =
             normalisedJobs.filter(
               (job) =>
                 job.status === "completed" &&
-                isJobRecentCompleted(job.raw || job, Date.now(), user?._id || user?.id)
+                isJobRecentCompleted(job.raw || job, Date.now(), driverId)
             );
 
           // Show all in-progress jobs (running) and upcoming jobs (not started yet)
-          const homeJobs = [
+          homeJobs = [
             ...inProgressJobs,
             ...upcomingJobs,
           ];
@@ -1119,13 +1312,12 @@ const HomeScreen = ({ navigation }) => {
 
         if (profileData) {
           setProfile(profileData);
-          setIsOnline(
-            profileData?.isOnline ??
-            profileData?.online ??
-            ["available", "online"].includes(
-              String(profileData?.availability || "").trim().toLowerCase()
-            )
-          );
+          const computedOnline = computeDriverOnlineStatus({
+            profileData,
+            homeJobs,
+            persistedShift: shiftPreferenceRef.current,
+          });
+          setIsOnline(computedOnline);
         }
       } catch (error) {
         if (!isMountedRef.current) return;
@@ -1280,6 +1472,7 @@ const HomeScreen = ({ navigation }) => {
     const hasActiveJob = jobs.some((job) => job.status === "inProgress");
 
     const resumeTracking = async () => {
+      let isPermissionGranted = false;
       if (Platform.OS === "android") {
         const permissionStatus = await getAndroidLocationPermissionStatus();
         const permissionDialog =
@@ -1294,12 +1487,19 @@ const HomeScreen = ({ navigation }) => {
           }
           return false;
         }
+        isPermissionGranted = true;
+      } else {
+        const nativeState = await getNativeLocationPermissionState();
+        isPermissionGranted =
+          nativeState === "authorizedalways" ||
+          nativeState === "authorizedwheninuse" ||
+          nativeState === "granted";
       }
 
       return startDriverLocationTracking({
         user: profile,
         isActiveJob: hasActiveJob,
-        permissionGranted: Platform.OS === "android",
+        permissionGranted: isPermissionGranted,
         serverConfirmedOnline: true,
       });
     };
@@ -1465,6 +1665,8 @@ const HomeScreen = ({ navigation }) => {
             );
           }
 
+          await AsyncStorage.setItem(SHIFT_ONLINE_KEY, "online").catch(() => {});
+          shiftPreferenceRef.current = "online";
           setIsOnline(true);
           showToast("You are now online.");
           return;
@@ -1492,6 +1694,8 @@ const HomeScreen = ({ navigation }) => {
         }
 
         offlineReconciliationNeededRef.current = offlineErrors.length > 0;
+        await AsyncStorage.setItem(SHIFT_ONLINE_KEY, "offline").catch(() => {});
+        shiftPreferenceRef.current = "offline";
         setIsOnline(false);
         if (offlineErrors.length > 0) {
           showToast(
@@ -1524,18 +1728,29 @@ const HomeScreen = ({ navigation }) => {
   const continueLocationPermissionSetup = useCallback(async () => {
     setLocationActionInFlight(true);
     try {
-      await requestDriverLocationPermission();
-      const status = await getAndroidLocationPermissionStatus();
-      const dialog = getAndroidLocationPermissionDialog(status);
-      if (dialog) {
-        setLocationPermissionDialog(dialog);
+      if (Platform.OS === "android") {
+        await requestDriverLocationPermission();
+        const status = await getAndroidLocationPermissionStatus();
+        const dialog = getAndroidLocationPermissionDialog(status);
+        if (dialog) {
+          setLocationPermissionDialog(dialog);
+        } else {
+          setLocationPermissionDialog(null);
+          await handleToggleOnline();
+        }
       } else {
+        const granted = await requestDriverLocationPermission();
         setLocationPermissionDialog(null);
-        await handleToggleOnline();
+        if (granted) {
+          await handleToggleOnline();
+        } else {
+          showToast("Location permission is required to go online.", "error");
+        }
       }
     } catch (error) {
+      setLocationPermissionDialog(null);
       showToast(
-        error?.message || "Unable to request Android location permission.",
+        error?.message || "Location permission setup could not complete.",
         "error"
       );
     } finally {
@@ -1547,29 +1762,44 @@ const HomeScreen = ({ navigation }) => {
     const dialog = locationPermissionDialog;
     setLocationPermissionDialog(null);
     locationSettingsOpenRef.current = true;
-    const opened = dialog?.settingsForDeviceLocation
+    const opened = dialog?.settingsForDeviceLocation && Platform.OS === "android"
       ? await openDeviceLocationSettings()
       : await openLocationSettings();
     if (!opened) {
       locationSettingsOpenRef.current = false;
-      showToast("Unable to open Android location settings.", "error");
+      showToast("Unable to open location settings.", "error");
     }
   }, [locationPermissionDialog, showToast]);
 
   const retryLocationPermissionCheck = useCallback(async () => {
     setLocationActionInFlight(true);
     try {
-      const status = await getAndroidLocationPermissionStatus();
-      const dialog = getAndroidLocationPermissionDialog(status);
-      if (dialog) {
-        setLocationPermissionDialog(dialog);
+      if (Platform.OS === "android") {
+        const status = await getAndroidLocationPermissionStatus();
+        const dialog = getAndroidLocationPermissionDialog(status);
+        if (dialog) {
+          setLocationPermissionDialog(dialog);
+        } else {
+          setLocationPermissionDialog(null);
+          await handleToggleOnline();
+        }
       } else {
+        const nativeState = await getNativeLocationPermissionState();
+        const granted =
+          nativeState === "authorizedalways" ||
+          nativeState === "authorizedwheninuse" ||
+          nativeState === "granted";
         setLocationPermissionDialog(null);
-        await handleToggleOnline();
+        if (granted) {
+          await handleToggleOnline();
+        } else {
+          showToast("Location access is not yet enabled in Settings.", "error");
+        }
       }
     } catch (error) {
+      setLocationPermissionDialog(null);
       showToast(
-        error?.message || "Unable to recheck Android location permission.",
+        error?.message || "Unable to recheck location permissions.",
         "error"
       );
     } finally {
@@ -1766,26 +1996,31 @@ const HomeScreen = ({ navigation }) => {
         removeClippedSubviews={Platform.OS === "android"}
         ListHeaderComponent={
           <>
-            {jobLoadError ? (
-              <View style={styles.loadErrorBanner}>
-                <Text style={styles.loadErrorText}>
-                  {jobLoadError?.response?.status === 401
-                    ? "Session expired. Please log in again."
-                    : jobLoadError?.response?.status === 403
-                    ? "Access restricted. Contact dispatch."
-                    : !jobLoadError?.response
-                    ? "Network unavailable. Check your connection."
-                    : "Unable to refresh driver jobs."}
-                </Text>
-                <TouchableOpacity
-                  onPress={() => loadHomeData()}
-                  accessibilityRole="button"
-                  accessibilityLabel="Retry loading jobs"
+            {(() => {
+              const apiErrorInfo = getApiErrorInfo(jobLoadError);
+              if (!apiErrorInfo) return null;
+              return (
+                <View
+                  style={[
+                    styles.loadErrorBanner,
+                    Platform.OS === "ios" && {
+                      marginTop: insets.top + verticalScale(6),
+                    },
+                  ]}
                 >
-                  <Text style={styles.loadErrorRetry}>Retry</Text>
-                </TouchableOpacity>
-              </View>
-            ) : null}
+                  <Text style={styles.loadErrorText}>
+                    {apiErrorInfo.banner}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => loadHomeData()}
+                    accessibilityRole="button"
+                    accessibilityLabel="Retry loading jobs"
+                  >
+                    <Text style={styles.loadErrorRetry}>Retry</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })()}
             {listHeader}
           </>
         }
@@ -1813,35 +2048,25 @@ const HomeScreen = ({ navigation }) => {
           ) : null
         }
         ListEmptyComponent={
-          jobLoadError ? (
-            <EmptyJobs
-              error={
-                jobLoadError?.response?.status === 401
-                  ? "Session Expired"
-                  : jobLoadError?.response?.status === 403
-                  ? "Access Restricted"
-                  : !jobLoadError?.response
-                  ? "Network Unavailable"
-                  : "API Request Failed"
-              }
-              subtitle={
-                jobLoadError?.response?.status === 401
-                  ? "Your session has expired. Please log in again to continue."
-                  : jobLoadError?.response?.status === 403
-                  ? "Your account does not have permission to view assigned jobs. Contact dispatch."
-                  : !jobLoadError?.response
-                  ? "Unable to connect to the server. Check your internet connection and retry."
-                  : "Could not fetch driver assignments. Tap retry to try again."
-              }
-              onRetry={() => loadHomeData()}
-            />
-          ) : (
-            <EmptyJobs
-              title="No assigned jobs"
-              subtitle="You currently have no jobs assigned. New assignments from dispatch will appear here."
-              onRetry={() => loadHomeData()}
-            />
-          )
+          (() => {
+            const apiErrorInfo = getApiErrorInfo(jobLoadError);
+            if (apiErrorInfo) {
+              return (
+                <EmptyJobs
+                  error={apiErrorInfo.title}
+                  subtitle={apiErrorInfo.detail}
+                  onRetry={() => loadHomeData()}
+                />
+              );
+            }
+            return (
+              <EmptyJobs
+                title="No assigned jobs"
+                subtitle="You currently have no jobs assigned. New assignments from dispatch will appear here."
+                onRetry={() => loadHomeData()}
+              />
+            );
+          })()
         }
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[

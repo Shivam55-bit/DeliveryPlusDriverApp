@@ -231,24 +231,45 @@ export const fetchDriverNotifications = async ({
   return inFlightNotificationsPromise;
 };
 
+let inFlightUnreadCountPromise = null;
+let lastUnreadCountFetchTimestamp = 0;
+const UNREAD_COUNT_TTL_MS = 15000;
+
 /**
  * Fetches authoritative unread count from `/api/driver/notifications/unread-count`.
+ * Deduplicates in-flight calls and caches response for 15s.
  */
-export const fetchDriverUnreadCount = async () => {
+export const fetchDriverUnreadCount = async ({ force = false } = {}) => {
   const authToken = await getStoredAuthToken();
   if (!authToken) return 0;
 
-  try {
-    const response = await API.get("/driver/notifications/unread-count", {
-      diagnosticOrigin: "notificationService.fetchDriverUnreadCount",
-    });
-    const count = Number(response?.unreadCount ?? response?.data?.unreadCount ?? 0);
-    inMemoryUnreadCount = count;
-    notifyUnreadSubscribers(count);
-    return count;
-  } catch (err) {
+  const now = Date.now();
+  if (!force && now - lastUnreadCountFetchTimestamp < UNREAD_COUNT_TTL_MS && inMemoryUnreadCount !== null) {
     return inMemoryUnreadCount;
   }
+
+  if (inFlightUnreadCountPromise && !force) {
+    return inFlightUnreadCountPromise;
+  }
+
+  inFlightUnreadCountPromise = (async () => {
+    try {
+      const response = await API.get("/driver/notifications/unread-count", {
+        diagnosticOrigin: "notificationService.fetchDriverUnreadCount",
+      });
+      const count = Number(response?.unreadCount ?? response?.data?.unreadCount ?? 0);
+      inMemoryUnreadCount = count;
+      lastUnreadCountFetchTimestamp = Date.now();
+      notifyUnreadSubscribers(count);
+      return count;
+    } catch (err) {
+      return inMemoryUnreadCount;
+    } finally {
+      inFlightUnreadCountPromise = null;
+    }
+  })();
+
+  return inFlightUnreadCountPromise;
 };
 
 /**
@@ -321,32 +342,53 @@ export const markAllDriverNotificationsAsRead = async () => {
  */
 export const isNotificationForCurrentDriver = async (remoteMessage) => {
   if (!remoteMessage?.data) return true;
-  const { recipientUserId, recipientDriverId } = remoteMessage.data;
-  if (!recipientUserId && !recipientDriverId) return true; // Legacy untagged payload
+  const data = remoteMessage.data;
+
+  // Extract all possible recipient/target driver & user identifiers from payload
+  const payloadTargets = [
+    data.recipientDriverId,
+    data.recipientUserId,
+    data.targetDriverId,
+    data.targetUserId,
+    data.assignedDriverId,
+    data.driverId,
+    data.driver_id,
+    data.recipientId,
+  ]
+    .filter(Boolean)
+    .map((v) => String(v).trim().toLowerCase());
+
+  // Untagged broadcasts, system announcements, or general alerts pass to all drivers
+  if (payloadTargets.length === 0) return true;
 
   try {
     const user = await getStoredUser();
     if (!user) return false;
 
-    const currentUserId = String(user._id || user.id || "");
-    const currentDriverId = String(user.driverId || user._id || user.id || "");
+    // Build comprehensive set of current driver's valid identities
+    const activeDriverIdentities = new Set(
+      [
+        user._id,
+        user.id,
+        user.driverId,
+        user.driver_id,
+        user.driverProfileId,
+        user.driverProfile?._id,
+        user.driverProfile?.id,
+        typeof user.driver === "string" ? user.driver : user.driver?._id || user.driver?.id,
+        user.email,
+        user.username,
+      ]
+        .filter(Boolean)
+        .map((v) => String(v).trim().toLowerCase())
+    );
 
-    if (recipientUserId && String(recipientUserId) !== currentUserId) {
-      console.warn("[Push] Security drop: recipientUserId does not match active driver", {
-        payloadUserId: recipientUserId,
-        currentUserId,
-      });
-      return false;
-    }
+    const matches = payloadTargets.some((target) => activeDriverIdentities.has(target));
 
-    if (
-      recipientDriverId &&
-      String(recipientDriverId) !== currentDriverId &&
-      String(recipientDriverId) !== currentUserId
-    ) {
-      console.warn("[Push] Security drop: recipientDriverId does not match active driver", {
-        payloadDriverId: recipientDriverId,
-        currentDriverId,
+    if (!matches) {
+      console.warn("[Push] Security drop: notification targets another driver", {
+        payloadTargets,
+        activeDriver: user._id || user.id || user.email,
       });
       return false;
     }
@@ -604,10 +646,42 @@ export const requestNotificationPermission = async () => {
   return true;
 };
 
+const DEVICE_ID_KEY = "@delivery_plus_device_id";
+
+/**
+ * Returns a stable unique device ID stored in AsyncStorage.
+ */
+export const getOrCreateDeviceId = async (driverId = "driver") => {
+  try {
+    let deviceId = await AsyncStorage.getItem(DEVICE_ID_KEY);
+    if (!deviceId) {
+      deviceId = `${Platform.OS}_${driverId}_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`;
+      await AsyncStorage.setItem(DEVICE_ID_KEY, deviceId);
+    }
+    return deviceId;
+  } catch {
+    return `${Platform.OS}_${driverId}`;
+  }
+};
+
+/**
+ * Redacts a token string for safe diagnostic logging (never prints full credentials).
+ */
+export const redactToken = (t) => {
+  if (!t || typeof t !== "string") return "none";
+  if (t.length <= 14) return "[REDACTED]";
+  return `${t.slice(0, 8)}...${t.slice(-6)}`;
+};
+
+let lastRegisteredToken = null;
+let lastRegisteredDriverId = null;
+let lastRegisteredAt = 0;
+const REGISTRATION_DEBOUNCE_MS = 60000; // 1 minute
+
 /**
  * Registers device FCM token with the backend.
  */
-export const registerDeviceToken = async (fcmToken = null) => {
+export const registerDeviceToken = async (fcmToken = null, { force = false } = {}) => {
   try {
     let tokenToRegister = fcmToken;
     const messagingInstance = getSafeMessaging();
@@ -650,10 +724,24 @@ export const registerDeviceToken = async (fcmToken = null) => {
       return tokenToRegister;
     }
 
+    // Skip redundant network registrations within debounce window
+    const now = Date.now();
+    if (
+      !force &&
+      tokenToRegister === lastRegisteredToken &&
+      driverId === lastRegisteredDriverId &&
+      now - lastRegisteredAt < REGISTRATION_DEBOUNCE_MS
+    ) {
+      return tokenToRegister;
+    }
+
+    const deviceId = await getOrCreateDeviceId(driverId);
+
     const payload = {
       token: tokenToRegister,
+      fcmToken: tokenToRegister, // Provide both keys for backend controller compatibility
       platform: Platform.OS,
-      deviceId: `${Platform.OS}_${driverId}_${Date.now()}`,
+      deviceId,
       driverId,
       appVersion: "1.0.0",
     };
@@ -685,10 +773,17 @@ export const registerDeviceToken = async (fcmToken = null) => {
       }
     }
 
+    console.info("[Push] FCM_TOKEN_REGISTRATION", {
+      platform: Platform.OS,
+      driverId,
+      tokenPrefix: redactToken(tokenToRegister),
+      status: registered ? "SUCCESS" : "FALLBACK_CACHED",
+    });
+
     if (registered) {
-      console.log("[Push] Device token registered with backend successfully.");
-    } else {
-      console.log("[Push] Device token cached locally; backend registration fallback acknowledged.");
+      lastRegisteredToken = tokenToRegister;
+      lastRegisteredDriverId = driverId;
+      lastRegisteredAt = Date.now();
     }
     return tokenToRegister;
   } catch (err) {
@@ -712,11 +807,14 @@ export const unregisterDeviceToken = async () => {
       ];
       for (const endpoint of endpoints) {
         try {
-          await API.post(endpoint, { token: storedFcmToken });
+          await API.post(endpoint, { token: storedFcmToken, fcmToken: storedFcmToken });
           break;
         } catch (ignored) {}
       }
       await AsyncStorage.removeItem(FCM_TOKEN_STORAGE_KEY);
+      lastRegisteredToken = null;
+      lastRegisteredDriverId = null;
+      lastRegisteredAt = 0;
       console.log("[Push] FCM token unregistered from backend.");
     }
   } catch (err) {
@@ -725,17 +823,31 @@ export const unregisterDeviceToken = async () => {
 };
 
 const executeNavigation = (data, remoteMessage) => {
-  const jobId = data.jobId || data.id || data._id;
+  const jobId =
+    data.jobId ||
+    data.id ||
+    data._id ||
+    data.job_id ||
+    (typeof data.job === "object" ? data.job?._id || data.job?.id : data.job);
+  const jobNumber = data.jobNumber || (typeof data.job === "object" ? data.job?.jobNumber : null);
   const type = (data.type || data.notificationType || "").toUpperCase();
 
   console.info("NOTIFICATION_TAPPED", {
     messageId: remoteMessage?.messageId || data._id || null,
     jobId: jobId ? String(jobId) : null,
+    jobNumber: jobNumber ? String(jobNumber) : null,
     type,
   });
 
-  if (jobId) {
-    navigate("JobDetail", { jobId, id: jobId });
+  if (jobId || jobNumber) {
+    const navParams = {
+      jobId: jobId ? String(jobId) : null,
+      id: jobId ? String(jobId) : null,
+    };
+    if (jobNumber) {
+      navParams.jobNumber = String(jobNumber);
+    }
+    navigate("JobDetail", navParams);
     return;
   }
 
@@ -751,37 +863,21 @@ const executeNavigation = (data, remoteMessage) => {
  * Resolves notification payload into a navigation action.
  * Stage: NOTIFICATION_TAPPED
  */
-export const handleNotificationNavigation = (remoteMessage) => {
+export const handleNotificationNavigation = async (remoteMessage) => {
   if (!remoteMessage) return;
 
   const data = remoteMessage.data || {};
-  const recipientUserId = data.recipientUserId;
-  const recipientDriverId = data.recipientDriverId;
 
-  if (recipientUserId || recipientDriverId) {
-    getStoredUser().then((user) => {
-      const currentUserId = String(user?._id || user?.id || "");
-      const currentDriverId = String(user?.driverId || user?._id || user?.id || "");
-      if (recipientUserId && String(recipientUserId) !== currentUserId) {
-        console.warn("[Push] Security drop: notification belongs to another driver.");
-        return;
-      }
-      if (
-        recipientDriverId &&
-        String(recipientDriverId) !== currentDriverId &&
-        String(recipientDriverId) !== currentUserId
-      ) {
-        console.warn("[Push] Security drop: notification belongs to another driver.");
-        return;
-      }
-      executeNavigation(data, remoteMessage);
-    }).catch(() => {
-      executeNavigation(data, remoteMessage);
-    });
-    return;
+  try {
+    const isForMe = await isNotificationForCurrentDriver(remoteMessage);
+    if (!isForMe) {
+      console.warn("[Push] Security drop on tap: notification targets another driver.");
+      return;
+    }
+    executeNavigation(data, remoteMessage);
+  } catch {
+    executeNavigation(data, remoteMessage);
   }
-
-  executeNavigation(data, remoteMessage);
 };
 
 /**
@@ -812,6 +908,19 @@ export const displayForegroundNotification = async (remoteMessage) => {
     }
 
     const channelId = data?.channelId || NOTIFICATION_CHANNELS.JOBS_URGENT.id;
+
+    // On iOS, UNUserNotificationCenter willPresentNotification in AppDelegate already displays
+    // the native banner for messages containing a notification payload (title & body).
+    // Avoid double popups by not displaying an identical Notifee banner on iOS when remoteMessage.notification exists.
+    if (Platform.OS === "ios" && remoteMessage?.notification) {
+      console.info("LOCAL_NOTIFICATION_DISPLAYED", {
+        messageId: remoteMessage.messageId || data._id || null,
+        channelId,
+        title,
+        nativePresented: true,
+      });
+      return;
+    }
 
     await notifee.displayNotification({
       title,

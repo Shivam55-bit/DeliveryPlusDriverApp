@@ -244,12 +244,30 @@ export default function SignatureScreen({ navigation, route }) {
 
       window.saveCanvas = function() {
         if (canvas) {
-          var dataUrl = canvas.toDataURL('image/png');
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'save',
-            data: dataUrl,
-            hasStroke: hasStroke
-          }));
+          try {
+            var targetWidth = 480;
+            var targetHeight = Math.max(160, Math.round(targetWidth * (canvas.height / canvas.width)));
+            var exportCanvas = document.createElement('canvas');
+            exportCanvas.width = targetWidth;
+            exportCanvas.height = targetHeight;
+            var exportCtx = exportCanvas.getContext('2d');
+            exportCtx.fillStyle = '#FFFFFF';
+            exportCtx.fillRect(0, 0, targetWidth, targetHeight);
+            exportCtx.drawImage(canvas, 0, 0, targetWidth, targetHeight);
+            var dataUrl = exportCanvas.toDataURL('image/png');
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'save',
+              data: dataUrl,
+              hasStroke: hasStroke
+            }));
+          } catch (e) {
+            var fallbackUrl = canvas.toDataURL('image/png');
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'save',
+              data: fallbackUrl,
+              hasStroke: hasStroke
+            }));
+          }
         }
         return true;
       };

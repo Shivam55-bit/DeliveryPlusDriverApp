@@ -161,14 +161,14 @@ export default function JobDetailScreen({ route, navigation }) {
       }
 
       console.warn("[JobDetail] API load error, falling back to params:", error.message);
-      if (rawParam && !job) {
-        setJob(normalizeJob(rawParam, user));
+      if (rawParam) {
+        setJob((prevJob) => prevJob || normalizeJob(rawParam, user));
       }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [jobId, rawParam, currentUser, navigation, job]);
+  }, [jobId, rawParam, currentUser, navigation]);
 
   useEffect(() => {
     fetchJobDetails();
@@ -228,9 +228,10 @@ export default function JobDetailScreen({ route, navigation }) {
     navigation.navigate("StartJobAgreement", {
       jobId,
       job,
-      onJobStarted: async (updatedJob) => {
-        if (updatedJob) setJob(normalizeJob(updatedJob, currentUser));
-        await fetchJobDetails();
+      onJobStarted: (updatedJob) => {
+        if (updatedJob) {
+          setJob(normalizeJob(updatedJob, currentUser));
+        }
       },
     });
   };

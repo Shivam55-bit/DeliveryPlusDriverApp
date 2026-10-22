@@ -241,19 +241,23 @@ export const requestNativeLocationPermission = async ({
     }
 
     if (normalized === "authorizedwheninuse") {
-      // Under iOS two-stage authorization, requestAlwaysAuthorization can be proposed,
-      // but authorizedwheninuse is fully valid for live online driver tracking.
-      try {
-        result = await nativeManager.requestAlwaysAuthorization();
-        normalized = normalizeAuthorizationStatus(result);
-      } catch (err) {
-        // Keep authorizedwheninuse if always request is deferred by OS
+      // Under iOS two-stage authorization, requestAlwaysAuthorization can be proposed if background tracking is required,
+      // but authorizedwheninuse is fully valid for live online driver tracking with background indicator.
+      if (requireBackground) {
+        try {
+          result = await nativeManager.requestAlwaysAuthorization();
+          normalized = normalizeAuthorizationStatus(result);
+        } catch (err) {
+          // Keep authorizedwheninuse if always request is deferred by OS
+        }
       }
+      const isPrecise = result?.accuracy !== "reduced";
       return {
         granted: true,
         status: normalized === "authorizedalways" ? "authorizedalways" : "authorizedwheninuse",
         requiresSettings: false,
         backgroundRequired: false,
+        preciseLocation: isPrecise,
       };
     }
 

@@ -3,6 +3,7 @@ import React
 import React_RCTAppDelegate
 import ReactAppDependencyProvider
 import FirebaseCore
+import FirebaseMessaging
 import UserNotifications
 
 @main
@@ -43,6 +44,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
     _ application: UIApplication,
     didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
   ) {
+    // Explicitly pass APNs token to Firebase Cloud Messaging so that FCM can map the device
+    Messaging.messaging().apnsToken = deviceToken
     #if DEBUG
     NSLog("[Push] APNs remote notifications registered successfully")
     #endif
@@ -68,14 +71,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
     } else {
       completionHandler([.alert, .sound, .badge])
     }
-  }
-
-  func userNotificationCenter(
-    _ center: UNUserNotificationCenter,
-    didReceive response: UNNotificationResponse,
-    withCompletionHandler completionHandler: @escaping () -> Void
-  ) {
-    completionHandler()
   }
 
   func application(

@@ -18,6 +18,7 @@ import { launchCamera, launchImageLibrary } from "react-native-image-picker";
 import LinearGradient from "react-native-linear-gradient";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import API, { getAuthToken, getStoredUser } from "../services/api";
 import { invalidateDriverJobsCache } from "../services/driverJobs";
@@ -417,6 +418,7 @@ export default function CompleteJobScreen({ navigation, route }) {
       setDriverActiveJobTracking(false).catch(() => {
         console.warn("[LOCATION_WATCH_STARTED] idle interval update failed");
       });
+      AsyncStorage.setItem("@delivery_plus_driver_shift_online", "online").catch(() => {});
 
       // Fetch fresh completed job asynchronously in background
       try {

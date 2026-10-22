@@ -24,6 +24,7 @@
 		13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = PrivacyInfo.xcprivacy; path = DeliveryPlusDriverApp/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		3DF49AFE305BB83D004F0251 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		3DF49B00305BB942004F0251 /* DeliveryPlusDriverAppRelease.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; name = DeliveryPlusDriverAppRelease.entitlements; path = DeliveryPlusDriverApp/DeliveryPlusDriverAppRelease.entitlements; sourceTree = "<group>"; };
+		3DF49B01305BB942004F0252 /* DeliveryPlusDriverAppDebug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; name = DeliveryPlusDriverAppDebug.entitlements; path = DeliveryPlusDriverApp/DeliveryPlusDriverAppDebug.entitlements; sourceTree = "<group>"; };
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = DeliveryPlusDriverApp/AppDelegate.swift; sourceTree = "<group>"; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = DeliveryPlusDriverApp/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		9959467CCBD63B5FD2DE8CC0 /* libPods-DeliveryPlusDriverApp.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-DeliveryPlusDriverApp.a"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -49,6 +50,7 @@
 		13B07FAE1A68108700A75B9A /* DeliveryPlusDriverApp */ = {
 			isa = PBXGroup;
 			children = (
+				3DF49B01305BB942004F0252 /* DeliveryPlusDriverAppDebug.entitlements */,
 				3DF49B00305BB942004F0251 /* DeliveryPlusDriverAppRelease.entitlements */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				761780EC2CA45674006654EE /* AppDelegate.swift */,
@@ -308,10 +310,11 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGNING_ALLOWED = YES;
 				CODE_SIGNING_REQUIRED = YES;
-				CODE_SIGN_ENTITLEMENTS = DeliveryPlusDriverApp/DeliveryPlusDriverAppRelease.entitlements;
+				CODE_SIGN_ENTITLEMENTS = DeliveryPlusDriverApp/DeliveryPlusDriverAppDebug.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = BGD5Z3UL2L;
 				ENABLE_BITCODE = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = DeliveryPlusDriverApp/Info.plist;
@@ -320,7 +323,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.9;
+				MARKETING_VERSION = 1.1.10;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -345,7 +348,7 @@
 				CODE_SIGN_ENTITLEMENTS = DeliveryPlusDriverApp/DeliveryPlusDriverAppRelease.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = BGD5Z3UL2L;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = DeliveryPlusDriverApp/Info.plist;
@@ -354,7 +357,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.9;
+				MARKETING_VERSION = 1.1.10;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",

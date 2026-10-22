@@ -128,14 +128,24 @@ export const normaliseDriverProfile = (response) => {
       profile.vehicleDetails ??
       null,
     profileImage: profile.avatar ?? profile.profileImage ?? null,
-    isOnline:
-      typeof onlineFlag === "boolean"
-        ? onlineFlag
-        : ["available", "online"].includes(availability)
-          ? true
-          : availability === "offline"
-            ? false
-            : null,
+    isOnline: [
+      "available",
+      "online",
+      "busy",
+      "on_job",
+      "on_duty",
+      "on-duty",
+      "working",
+      "in_progress",
+      "assigned",
+      "completed",
+    ].includes(availability)
+      ? true
+      : ["offline", "inactive", "off_duty", "off-duty"].includes(availability)
+      ? false
+      : typeof onlineFlag === "boolean"
+      ? onlineFlag
+      : null,
     isVerified: Boolean(
       profile.isVerified ??
         profile.documentsVerified ??
