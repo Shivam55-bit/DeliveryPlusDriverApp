@@ -11,6 +11,10 @@ let mockLocationCallback;
 
 jest.mock("react-native", () => ({
   Alert: { alert: jest.fn() },
+  AppState: {
+    addEventListener: jest.fn(() => ({ remove: jest.fn() })),
+    currentState: "active",
+  },
   Platform: { OS: "android" },
 }));
 

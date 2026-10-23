@@ -11,6 +11,9 @@ const mockAndroidLocationManager = {
 const mockIosLocationManager = {
   startTracking: jest.fn(),
   stopTracking: jest.fn(),
+  updateTrackingOptions: jest.fn(),
+  beginBackgroundTask: jest.fn(),
+  endBackgroundTask: jest.fn(),
 };
 
 jest.mock("react-native", () => {

@@ -1419,14 +1419,6 @@ const HomeScreen = ({ navigation }) => {
             if (offlineReconciliationNeededRef.current) {
               const reconciliationErrors = [];
               try {
-                await updateDriverAvailability(
-                  false,
-                  "HomeScreen.reconcileOfflineAvailability"
-                );
-              } catch (error) {
-                reconciliationErrors.push(error);
-              }
-              try {
                 await stopDriverTrackingAndMarkOffline();
               } catch (error) {
                 reconciliationErrors.push(error);
@@ -1633,19 +1625,6 @@ const HomeScreen = ({ navigation }) => {
           } catch (error) {
             const rollbackErrors = [];
             try {
-              await stopDriverLocationTracking();
-            } catch (rollbackError) {
-              rollbackErrors.push(rollbackError);
-            }
-            try {
-              await updateDriverAvailability(
-                false,
-                "HomeScreen.rollbackOnlineAvailability"
-              );
-            } catch (rollbackError) {
-              rollbackErrors.push(rollbackError);
-            }
-            try {
               await stopDriverTrackingAndMarkOffline();
             } catch (rollbackError) {
               rollbackErrors.push(rollbackError);
@@ -1674,19 +1653,6 @@ const HomeScreen = ({ navigation }) => {
 
         suppressAutomaticTrackingRef.current = true;
         const offlineErrors = [];
-        try {
-          await stopDriverLocationTracking();
-        } catch (error) {
-          offlineErrors.push(error);
-        }
-        try {
-          await updateDriverAvailability(
-            false,
-            "HomeScreen.handleToggleOnline"
-          );
-        } catch (error) {
-          offlineErrors.push(error);
-        }
         try {
           await stopDriverTrackingAndMarkOffline();
         } catch (error) {

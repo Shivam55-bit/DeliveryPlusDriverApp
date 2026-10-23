@@ -1,14 +1,17 @@
-import { Alert, Platform } from "react-native";
+import { Alert, AppState, Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import API, { getAuthToken, getStoredAuthToken, getStoredUser, tryRequest } from "./api";
 import {
+  beginNativeBackgroundTask,
+  endNativeBackgroundTask,
   getAndroidLocationPermissionStatus,
   getCurrentNativeLocation,
   getNativeLocationPermissionState,
   requestNativeLocationPermission,
   startNativeLocationTracking,
   stopNativeLocationTracking as stopNativeLocationWatch,
+  updateNativeTrackingOptions,
 } from "./nativeLocationService";
 
 const TRACKING_ENABLED_KEY = "@delivery_plus_driver_location_tracking_enabled";
@@ -28,11 +31,17 @@ let activeSessionToken = null;
 let activeJob = false;
 let uploadInFlight = null;
 let latestPendingLocation = null;
+let pendingRetryLocation = null;
+let pendingRetryTimestamp = 0;
+let networkRecoveryTimer = null;
 let permissionPromptPromise = null;
 let startPromise = null;
 let lastSuccessfulUploadAt = 0;
 let lastSuccessfulCoordinates = null;
 let nativeWatchId = null;
+let offlineInFlight = null;
+let lastOfflineTime = 0;
+let appStateSubscription = null;
 
 const wait = (duration) =>
   new Promise((resolve) => setTimeout(resolve, duration));
@@ -71,6 +80,7 @@ const isUserOnline = (user, hasActiveJob = false) => {
 export const buildLocationPayload = (location) => {
   const latitude = Number(location?.coords?.latitude);
   const longitude = Number(location?.coords?.longitude);
+  const accuracy = Number(location?.coords?.accuracy);
   const age = Number(location?.age);
 
   if (
@@ -82,6 +92,7 @@ export const buildLocationPayload = (location) => {
     !Number.isFinite(longitude) ||
     longitude < -180 ||
     longitude > 180 ||
+    (Number.isFinite(accuracy) && accuracy < 0) ||
     (Number.isFinite(age) && age > 120000)
   ) {
     return null;
@@ -195,6 +206,16 @@ const uploadLocation = async (payload, token) => {
 
   const startTime = Date.now();
   console.info("GPS_UPLOAD_REQUESTED", { lat: payload.latitude, lng: payload.longitude });
+
+  let bgTaskId = null;
+  if (Platform.OS === "ios") {
+    try {
+      bgTaskId = await beginNativeBackgroundTask();
+    } catch (e) {
+      // ignore
+    }
+  }
+
   try {
     await tryRequest(
       async (path) => API.post(
@@ -215,6 +236,9 @@ const uploadLocation = async (payload, token) => {
 
     lastSuccessfulUploadAt = Date.now();
     lastSuccessfulCoordinates = payload;
+    pendingRetryLocation = null;
+    pendingRetryTimestamp = 0;
+
     console.info("GPS_UPLOAD_ACCEPTED", {
       lat: payload.latitude,
       lng: payload.longitude,
@@ -227,6 +251,14 @@ const uploadLocation = async (payload, token) => {
       `[LOCATION_UPLOAD_FAILED] ${error?.response?.status || "network"}`
     );
     throw error;
+  } finally {
+    if (Platform.OS === "ios" && bgTaskId !== null && bgTaskId !== undefined) {
+      try {
+        await endNativeBackgroundTask(bgTaskId);
+      } catch (e) {
+        // ignore
+      }
+    }
   }
 };
 
@@ -239,7 +271,7 @@ const uploadWithRetry = async (payload, token) => {
     try {
       return await uploadLocation(payload, token);
     } catch (error) {
-      if (!isRetryableError(error) || attempt === MAX_UPLOAD_ATTEMPTS - 1) {
+      if (!trackingEnabled || !isRetryableError(error) || attempt === MAX_UPLOAD_ATTEMPTS - 1) {
         return false;
       }
       await wait(1000 * 2 ** attempt);
@@ -249,10 +281,32 @@ const uploadWithRetry = async (payload, token) => {
   return false;
 };
 
+const scheduleNetworkRecovery = () => {
+  if (networkRecoveryTimer || !trackingEnabled) return;
+  networkRecoveryTimer = setTimeout(() => {
+    networkRecoveryTimer = null;
+    if (
+      trackingEnabled &&
+      pendingRetryLocation &&
+      Date.now() - pendingRetryTimestamp < 120000 &&
+      !uploadInFlight
+    ) {
+      console.info("[GPS_DIAGNOSTIC] executing network recovery upload attempt");
+      uploadInFlight = drainLocationQueue().finally(() => {
+        uploadInFlight = null;
+      });
+    }
+  }, 8000);
+  if (networkRecoveryTimer && typeof networkRecoveryTimer.unref === "function") {
+    networkRecoveryTimer.unref();
+  }
+};
+
 const drainLocationQueue = async () => {
-  while (trackingEnabled && latestPendingLocation) {
-    const payload = latestPendingLocation;
+  while (trackingEnabled && (latestPendingLocation || pendingRetryLocation)) {
+    const payload = latestPendingLocation || pendingRetryLocation;
     latestPendingLocation = null;
+    pendingRetryLocation = null;
     const token = activeSessionToken;
 
     if (
@@ -261,7 +315,17 @@ const drainLocationQueue = async () => {
       token === activeSessionToken &&
       getAuthToken() === token
     ) {
-      await uploadWithRetry(payload, token);
+      const success = await uploadWithRetry(payload, token);
+      if (!success && trackingEnabled) {
+        // Preserve recent fix for network recovery if still fresh (< 120s)
+        const now = Date.now();
+        if (now - (pendingRetryTimestamp || now) < 120000) {
+          pendingRetryLocation = payload;
+          pendingRetryTimestamp = pendingRetryTimestamp || now;
+          scheduleNetworkRecovery();
+        }
+        break;
+      }
     }
   }
 };
@@ -286,9 +350,10 @@ const queueLocation = async (location) => {
     timestamp: new Date().toISOString(),
   });
   console.info("[LOCATION_FIX_RECEIVED]");
+
   const now = Date.now();
-  const minimumInterval = activeJob ? 12000 : 45000;
-  const minimumMovement = activeJob ? 20 : 50;
+  const minimumInterval = activeJob ? 10000 : 35000;
+  const minimumMovement = activeJob ? 20 : 40;
   const movedEnough =
     !lastSuccessfulCoordinates ||
     distanceBetweenMeters(lastSuccessfulCoordinates, payload) >=
@@ -302,8 +367,8 @@ const queueLocation = async (location) => {
   if (!uploadInFlight) {
     uploadInFlight = drainLocationQueue().finally(() => {
       uploadInFlight = null;
-      if (trackingEnabled && latestPendingLocation) {
-        queueLocation({ coords: latestPendingLocation }).catch(() => {
+      if (trackingEnabled && (latestPendingLocation || pendingRetryLocation)) {
+        drainLocationQueue().catch(() => {
           console.warn("[LOCATION_UPLOAD_FAILED] location queue failed");
         });
       }
@@ -324,12 +389,44 @@ const distanceBetweenMeters = (first, second) => {
   return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
+const setupAppStateHandling = () => {
+  if (appStateSubscription || typeof AppState?.addEventListener !== "function") return;
+  appStateSubscription = AppState.addEventListener("change", async (nextState) => {
+    if (nextState === "active" && trackingEnabled) {
+      console.info("[GPS_DIAGNOSTIC] AppState active, poking fresh location");
+      if (networkRecoveryTimer) {
+        clearTimeout(networkRecoveryTimer);
+        networkRecoveryTimer = null;
+      }
+      try {
+        const fresh = await getCurrentNativeLocation({ timeoutMs: 3000 });
+        if (fresh && trackingEnabled) {
+          await queueLocation(fresh);
+        }
+      } catch (e) {
+        if (pendingRetryLocation && !uploadInFlight) {
+          uploadInFlight = drainLocationQueue().finally(() => {
+            uploadInFlight = null;
+          });
+        }
+      }
+    }
+  });
+};
+
 const deactivateTracking = async () => {
   trackingEnabled = false;
   activeSessionToken = null;
   latestPendingLocation = null;
+  pendingRetryLocation = null;
+  pendingRetryTimestamp = 0;
   lastSuccessfulUploadAt = 0;
   lastSuccessfulCoordinates = null;
+
+  if (networkRecoveryTimer) {
+    clearTimeout(networkRecoveryTimer);
+    networkRecoveryTimer = null;
+  }
 
   let cleanupError = null;
   try {
@@ -375,6 +472,9 @@ const startTracking = async ({
     await deactivateTracking();
     return false;
   }
+
+  setupAppStateHandling();
+
   if (trackingEnabled && activeSessionToken === token) {
     const androidStatus = Platform.OS === "android" ? await getAndroidLocationPermissionStatus().catch(() => null) : null;
     const serviceRunning =
@@ -384,6 +484,10 @@ const startTracking = async ({
       return true;
     }
     activeJob = nextActiveJob;
+    if (Platform.OS === "ios") {
+      await updateNativeTrackingOptions({ activeJob: nextActiveJob });
+      return true;
+    }
     await stopNativeWatch();
   }
 
@@ -402,8 +506,8 @@ const startTracking = async ({
     await AsyncStorage.setItem(TRACKING_ENABLED_KEY, "true");
     nativeWatchId = await startNativeLocationTracking({
       activeJob: nextActiveJob,
-      minimumIntervalMs: nextActiveJob ? 12000 : 45000,
-      minimumDistanceMeters: nextActiveJob ? 20 : 50,
+      minimumIntervalMs: nextActiveJob ? 10000 : 35000,
+      minimumDistanceMeters: nextActiveJob ? 20 : 40,
       onLocation: (location) => {
         queueLocation(location).catch(() => {
           console.warn("[LOCATION_UPLOAD_FAILED] location queue failed");
@@ -413,6 +517,16 @@ const startTracking = async ({
         console.warn("[LOCATION_PERMISSION] no location source available", error);
       },
     });
+
+    // Acquire and upload initial fresh location immediately
+    Promise.resolve()
+      .then(() => getCurrentNativeLocation({ timeoutMs: 3500 }))
+      .then((initialLoc) => {
+        if (initialLoc && trackingEnabled) {
+          queueLocation(initialLoc).catch(() => {});
+        }
+      })
+      .catch(() => {});
   } catch (error) {
     try {
       await deactivateTracking();
@@ -446,11 +560,16 @@ export const setDriverActiveJobTracking = async (isActiveJob) => {
     return;
   }
 
+  if (Platform.OS === "ios") {
+    await updateNativeTrackingOptions({ activeJob });
+    return;
+  }
+
   await stopNativeWatch();
   nativeWatchId = await startNativeLocationTracking({
     activeJob,
-    minimumIntervalMs: activeJob ? 12000 : 45000,
-    minimumDistanceMeters: activeJob ? 20 : 50,
+    minimumIntervalMs: activeJob ? 10000 : 35000,
+    minimumDistanceMeters: activeJob ? 20 : 40,
     onLocation: (location) => {
       queueLocation(location).catch(() => {
         console.warn("[LOCATION_UPLOAD_FAILED] location queue failed");
@@ -500,47 +619,60 @@ export const sendFinalDriverLocation = async () => {
 };
 
 export const stopDriverTrackingAndMarkOffline = async () => {
-  const token = (await getStoredAuthToken()) || getAuthToken();
-  const user = await getStoredUser();
-  let cleanupError = null;
-  try {
-    await deactivateTracking();
-  } catch (error) {
-    cleanupError = error;
+  if (offlineInFlight) {
+    return offlineInFlight;
   }
 
-  if (isGuestSession(token, user)) {
-    if (cleanupError) throw cleanupError;
-    return;
-  }
-
-  let offlineError = null;
-  try {
-    await tryRequest(
-      async (path) => API.post(
-        path,
-        {},
-        {
-          timeout: REQUEST_TIMEOUT_MS,
-          diagnosticOrigin: "locationTrackingService.stopDriverTrackingAndMarkOffline",
-        }
-      ),
-      DRIVER_OFFLINE_ENDPOINTS,
-      { logLabel: "driver-offline" }
-    );
-  } catch (error) {
-    console.warn(
-      `[LOCATION_UPLOAD_FAILED] offline ${error?.response?.status || "network"}`
-    );
-    offlineError = error;
-  }
-
-  if (cleanupError || offlineError) {
-    if (cleanupError && offlineError) {
-      console.warn("[LOCATION_UPLOAD_FAILED] tracking cleanup and offline endpoint both failed");
+  offlineInFlight = (async () => {
+    const token = (await getStoredAuthToken()) || getAuthToken();
+    const user = await getStoredUser();
+    let cleanupError = null;
+    try {
+      await deactivateTracking();
+    } catch (error) {
+      cleanupError = error;
     }
-    throw offlineError || cleanupError;
-  }
+
+    if (isGuestSession(token, user)) {
+      lastOfflineTime = Date.now();
+      if (cleanupError) throw cleanupError;
+      return;
+    }
+
+    let offlineError = null;
+    try {
+      await tryRequest(
+        async (path) => API.post(
+          path,
+          {},
+          {
+            timeout: REQUEST_TIMEOUT_MS,
+            diagnosticOrigin: "locationTrackingService.stopDriverTrackingAndMarkOffline",
+          }
+        ),
+        DRIVER_OFFLINE_ENDPOINTS,
+        { logLabel: "driver-offline" }
+      );
+      lastOfflineTime = Date.now();
+      console.info("[GPS_DIAGNOSTIC] Offline confirmed by server");
+    } catch (error) {
+      console.warn(
+        `[LOCATION_UPLOAD_FAILED] offline ${error?.response?.status || "network"}`
+      );
+      offlineError = error;
+    }
+
+    if (cleanupError || offlineError) {
+      if (cleanupError && offlineError) {
+        console.warn("[LOCATION_UPLOAD_FAILED] tracking cleanup and offline endpoint both failed");
+      }
+      throw offlineError || cleanupError;
+    }
+  })().finally(() => {
+    offlineInFlight = null;
+  });
+
+  return offlineInFlight;
 };
 
 export const handleHeadlessLocation = async () => undefined;

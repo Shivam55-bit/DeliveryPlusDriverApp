@@ -388,3 +388,35 @@ export const getCurrentNativeLocation = async ({ timeoutMs = 20000 } = {}) => {
     timestamp: location.timestamp,
   };
 };
+
+export const updateNativeTrackingOptions = async ({ activeJob = false } = {}) => {
+  if (Platform.OS === "ios" && iosLocationManager?.updateTrackingOptions) {
+    try {
+      await iosLocationManager.updateTrackingOptions(activeJob);
+    } catch (error) {
+      console.warn("[LOCATION_TRACKING] failed to update iOS tracking options", error);
+    }
+  }
+};
+
+export const beginNativeBackgroundTask = async () => {
+  if (Platform.OS === "ios" && iosLocationManager?.beginBackgroundTask) {
+    try {
+      return await iosLocationManager.beginBackgroundTask();
+    } catch (error) {
+      return null;
+    }
+  }
+  return null;
+};
+
+export const endNativeBackgroundTask = async (taskId) => {
+  if (Platform.OS === "ios" && iosLocationManager?.endBackgroundTask && taskId !== null && taskId !== undefined) {
+    try {
+      await iosLocationManager.endBackgroundTask(taskId);
+    } catch (error) {
+      // ignore
+    }
+  }
+};
+
