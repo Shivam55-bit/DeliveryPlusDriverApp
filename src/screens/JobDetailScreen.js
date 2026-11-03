@@ -11,13 +11,14 @@ import {
   Image,
   AppState,
   RefreshControl,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import API, { clearAuthToken, getStoredUser, getCurrentUser } from "../services/api";
-import { getCachedJob } from "../services/driverJobs";
+import { getCachedJob, invalidateDriverJobsCache } from "../services/driverJobs";
 import LoadingSpinner from "../components/LoadingSpinner";
 import AppIcon from "../components/common/AppIcon";
 import {
@@ -33,20 +34,103 @@ import {
   openMap,
 } from "../utils/jobHelpers";
 
-const LiveJobTimerBanner = React.memo(({ startedAt, isRunning }) => {
-  const seconds = useElapsedTime(startedAt, isRunning);
-  return (
-    <View style={styles.liveTimerBanner}>
-      <View style={styles.liveTimerLeft}>
-        <View style={styles.pulseDot} />
-        <Text style={styles.liveTimerTitle}>My Live Job Time</Text>
+const LiveJobTimerBanner = React.memo(
+  ({
+    startedAt,
+    isRunning,
+    pauseIntervals = [],
+    isPaused = false,
+    onPause,
+    onResume,
+    actionLoading = false,
+  }) => {
+    const seconds = useElapsedTime(startedAt, isRunning, pauseIntervals, isPaused);
+    return (
+      <View
+        style={[
+          styles.liveTimerBanner,
+          isPaused && styles.liveTimerBannerPaused,
+        ]}
+      >
+        <View style={styles.liveTimerInfoCol}>
+          <View style={styles.liveTimerHeaderRow}>
+            <View
+              style={[
+                styles.pulseDot,
+                isPaused && styles.pulseDotPaused,
+              ]}
+            />
+            <Text
+              style={[
+                styles.liveTimerTitle,
+                isPaused && styles.liveTimerTitlePaused,
+              ]}
+            >
+              {isPaused ? "TIMER PAUSED" : "MY LIVE JOB TIME"}
+            </Text>
+          </View>
+
+          <Text
+            style={[
+              styles.liveTimerClock,
+              isPaused && styles.liveTimerClockPaused,
+            ]}
+          >
+            {formatLiveTimer(seconds)}
+          </Text>
+
+          {isPaused ? (
+            <Text style={styles.liveTimerSubPaused}>
+              Elapsed time frozen • Not billing
+            </Text>
+          ) : null}
+        </View>
+
+        {onPause && onResume ? (
+          <View style={styles.liveTimerActionCol}>
+            {isPaused ? (
+              <TouchableOpacity
+                style={styles.timerQuickBtnResume}
+                onPress={onResume}
+                disabled={actionLoading}
+                activeOpacity={0.75}
+                accessibilityRole="button"
+                accessibilityLabel="Resume timer"
+              >
+                {actionLoading ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <AppIcon library="Ionicons" name="play" size={13} color="#FFFFFF" />
+                    <Text style={styles.timerQuickBtnText}>Resume</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={styles.timerQuickBtnPause}
+                onPress={onPause}
+                disabled={actionLoading}
+                activeOpacity={0.75}
+                accessibilityRole="button"
+                accessibilityLabel="Pause timer"
+              >
+                {actionLoading ? (
+                  <ActivityIndicator size="small" color="#B45309" />
+                ) : (
+                  <>
+                    <AppIcon library="Ionicons" name="pause" size={13} color="#B45309" />
+                    <Text style={styles.timerQuickBtnPauseText}>Pause</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
+        ) : null}
       </View>
-      <Text style={styles.liveTimerClock}>
-        {formatLiveTimer(seconds)}
-      </Text>
-    </View>
-  );
-});
+    );
+  }
+);
 
 export default function JobDetailScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
@@ -70,9 +154,16 @@ export default function JobDetailScreen({ route, navigation }) {
   });
   const [loading, setLoading] = useState(() => !job);
   const [refreshing, setRefreshing] = useState(false);
+  const [timerActionLoading, setTimerActionLoading] = useState(false);
   const scrollViewRef = useRef(null);
 
   const jobState = getJobState(job) || {};
+  const isPaused = Boolean(
+    job?.status === "paused" ||
+    jobState?.isPaused ||
+    job?.myAssignment?.isPaused
+  );
+
   const myAssignment = useMemo(() => {
     return (
       job?.myAssignment || {
@@ -83,17 +174,22 @@ export default function JobDetailScreen({ route, navigation }) {
         startedAt: job?.startedAt,
         completedAt: job?.completedAt,
         canStartWork: Boolean(jobState?.isPending),
-        canEndWork: Boolean(jobState?.isInProgress),
+        canEndWork: Boolean(jobState?.isInProgress || isPaused),
+        isPaused: isPaused,
+        pauseIntervals: job?.pauseIntervals || [],
       }
     );
-  }, [job, jobState?.isPending, jobState?.isInProgress, jobState?.isCompleted]);
+  }, [job, jobState?.isPending, jobState?.isInProgress, jobState?.isCompleted, isPaused]);
 
   const driverEarnings = useMemo(() => {
     return calculateDriverHourlyEarnings(myAssignment, job);
   }, [myAssignment, job]);
 
   const isMyWorkInProgress = Boolean(
-    myAssignment?.isInProgress && myAssignment?.startedAt && !myAssignment?.completedAt
+    (myAssignment?.isInProgress || jobState?.isInProgress || isPaused) &&
+    (myAssignment?.startedAt || job?.startedAt) &&
+    !myAssignment?.completedAt &&
+    !job?.completedAt
   );
 
   const fetchJobDetails = useCallback(async (isManualRefresh = false) => {
@@ -236,7 +332,137 @@ export default function JobDetailScreen({ route, navigation }) {
     });
   };
 
+  const handlePauseTimer = async () => {
+    if (timerActionLoading || !jobId) return;
+    Alert.alert(
+      "Pause Timer",
+      "Are you sure you want to pause the live work timer? Time spent paused will not be counted towards your billable job duration.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Pause Timer",
+          style: "destructive",
+          onPress: async () => {
+            setTimerActionLoading(true);
+            try {
+              const res = await API.post(`/jobs/${jobId}/pause`);
+              const updated = res.job || res.data?.job || res;
+              if (updated && typeof updated === "object") {
+                setJob(normalizeJob(updated, currentUser));
+              } else {
+                setJob((prev) => {
+                  if (!prev) return prev;
+                  const currentPauses = Array.isArray(prev.pauseIntervals)
+                    ? [...prev.pauseIntervals]
+                    : [];
+                  currentPauses.push({ pausedAt: new Date().toISOString() });
+                  return normalizeJob(
+                    {
+                      ...prev,
+                      status: "paused",
+                      pauseIntervals: currentPauses,
+                    },
+                    currentUser
+                  );
+                });
+              }
+              invalidateDriverJobsCache();
+            } catch (err) {
+              const errMsg =
+                err.response?.data?.message ||
+                err.response?.data?.error ||
+                err.message ||
+                "Failed to pause timer. Please try again.";
+              Alert.alert("Unable to Pause", errMsg);
+            } finally {
+              setTimerActionLoading(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleResumeTimer = async () => {
+    if (timerActionLoading || !jobId) return;
+    setTimerActionLoading(true);
+    try {
+      const res = await API.post(`/jobs/${jobId}/resume`);
+      const updated = res.job || res.data?.job || res;
+      if (updated && typeof updated === "object") {
+        setJob(normalizeJob(updated, currentUser));
+      } else {
+        setJob((prev) => {
+          if (!prev) return prev;
+          const currentPauses = Array.isArray(prev.pauseIntervals)
+            ? [...prev.pauseIntervals]
+            : [];
+          if (
+            currentPauses.length > 0 &&
+            !currentPauses[currentPauses.length - 1].resumedAt
+          ) {
+            currentPauses[currentPauses.length - 1] = {
+              ...currentPauses[currentPauses.length - 1],
+              resumedAt: new Date().toISOString(),
+            };
+          }
+          return normalizeJob(
+            {
+              ...prev,
+              status: "started",
+              pauseIntervals: currentPauses,
+            },
+            currentUser
+          );
+        });
+      }
+      invalidateDriverJobsCache();
+    } catch (err) {
+      const errMsg =
+        err.response?.data?.message ||
+        err.response?.data?.error ||
+        err.message ||
+        "Failed to resume timer. Please try again.";
+      Alert.alert("Unable to Resume", errMsg);
+    } finally {
+      setTimerActionLoading(false);
+    }
+  };
+
   const handleEndJob = () => {
+    if (isPaused) {
+      Alert.alert(
+        "Timer is Paused",
+        "The timer is currently paused. Please resume the timer before finalizing completion terms.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Resume & Continue",
+            onPress: async () => {
+              try {
+                setTimerActionLoading(true);
+                const res = await API.post(`/jobs/${jobId}/resume`);
+                const updated = res.job || res.data?.job || res;
+                if (updated && typeof updated === "object") {
+                  setJob(normalizeJob(updated, currentUser));
+                }
+                invalidateDriverJobsCache();
+              } catch (err) {
+                console.warn("[JobDetail] Resume before complete note:", err.message);
+              } finally {
+                setTimerActionLoading(false);
+                navigation.navigate("JobCompletionTerms", {
+                  jobId,
+                  job,
+                });
+              }
+            },
+          },
+        ]
+      );
+      return;
+    }
+
     navigation.navigate("JobCompletionTerms", {
       jobId,
       job,
@@ -337,7 +563,8 @@ export default function JobDetailScreen({ route, navigation }) {
               style={[
                 styles.headerStatusBadge,
                 jobState?.isCompleted && styles.headerStatusCompleted,
-                jobState?.isInProgress && styles.headerStatusInProgress,
+                isPaused && styles.headerStatusPaused,
+                jobState?.isInProgress && !isPaused && styles.headerStatusInProgress,
                 jobState?.isPending && styles.headerStatusPending,
                 jobState?.isCancelled && styles.headerStatusCancelled,
               ]}
@@ -346,7 +573,8 @@ export default function JobDetailScreen({ route, navigation }) {
                 style={[
                   styles.headerStatusDot,
                   jobState?.isCompleted && styles.headerStatusDotCompleted,
-                  jobState?.isInProgress && styles.headerStatusDotInProgress,
+                  isPaused && styles.headerStatusDotPaused,
+                  jobState?.isInProgress && !isPaused && styles.headerStatusDotInProgress,
                   jobState?.isPending && styles.headerStatusDotPending,
                   jobState?.isCancelled && styles.headerStatusDotCancelled,
                 ]}
@@ -355,28 +583,32 @@ export default function JobDetailScreen({ route, navigation }) {
                 style={[
                   styles.headerStatusText,
                   jobState?.isCompleted && styles.headerStatusTextCompleted,
-                  jobState?.isInProgress && styles.headerStatusTextInProgress,
+                  isPaused && styles.headerStatusTextPaused,
+                  jobState?.isInProgress && !isPaused && styles.headerStatusTextInProgress,
                   jobState?.isPending && styles.headerStatusTextPending,
                   jobState?.isCancelled && styles.headerStatusTextCancelled,
                 ]}
               >
                 {jobState?.isCompleted
                   ? "Completed"
-                  : jobState?.isInProgress
-                    ? "In Progress"
-                    : jobState?.isPending
-                      ? "Pending"
-                      : "Cancelled"}
+                  : isPaused
+                    ? "Paused"
+                    : jobState?.isInProgress
+                      ? "In Progress"
+                      : jobState?.isPending
+                        ? "Pending"
+                        : "Cancelled"}
               </Text>
             </View>
 
             {/* My Driver Status Pill if different / multi-driver */}
-            {myAssignment.isAssigned && myAssignment.status && (
+            {myAssignment.isAssigned && (
               <View
                 style={[
                   styles.myStatusPill,
                   myAssignment.isCompleted && styles.myStatusPillCompleted,
-                  myAssignment.isInProgress && styles.myStatusPillInProgress,
+                  isPaused && styles.myStatusPillPaused,
+                  myAssignment.isInProgress && !isPaused && styles.myStatusPillInProgress,
                   myAssignment.isPending && styles.myStatusPillPending,
                 ]}
               >
@@ -384,11 +616,12 @@ export default function JobDetailScreen({ route, navigation }) {
                   style={[
                     styles.myStatusPillText,
                     myAssignment.isCompleted && styles.myStatusPillTextCompleted,
-                    myAssignment.isInProgress && styles.myStatusPillTextInProgress,
+                    isPaused && styles.myStatusPillTextPaused,
+                    myAssignment.isInProgress && !isPaused && styles.myStatusPillTextInProgress,
                     myAssignment.isPending && styles.myStatusPillTextPending,
                   ]}
                 >
-                  My Work: {myAssignment.isCompleted ? "Done" : myAssignment.isInProgress ? "Working" : "Assigned"}
+                  My Work: {myAssignment.isCompleted ? "Done" : isPaused ? "Paused" : myAssignment.isInProgress ? "Working" : "Assigned"}
                 </Text>
               </View>
             )}
@@ -673,8 +906,13 @@ export default function JobDetailScreen({ route, navigation }) {
               </View>
             ) : isMyWorkInProgress ? (
               <LiveJobTimerBanner
-                startedAt={myAssignment?.startedAt}
-                isRunning={isMyWorkInProgress}
+                startedAt={myAssignment?.startedAt || job?.startedAt}
+                isRunning={!isPaused}
+                pauseIntervals={myAssignment?.pauseIntervals || job?.pauseIntervals || []}
+                isPaused={isPaused}
+                onPause={handlePauseTimer}
+                onResume={handleResumeTimer}
+                actionLoading={timerActionLoading}
               />
             ) : (
               <View style={styles.notStartedBanner}>
@@ -847,10 +1085,103 @@ export default function JobDetailScreen({ route, navigation }) {
           </View>
         ) : null /* Pricing hidden when showPriceToDriver is false */}
 
-        {/* ── Items & Instructions ── */}
+        {/* ── Items to Deliver ── */}
         <View style={styles.card}>
-          <Text style={styles.cardSectionTitle}>Instructions & Items</Text>
-          <Text style={styles.notesText}>{job.notes || "No special instructions provided."}</Text>
+          <View style={styles.cardHeaderRow}>
+            <View style={styles.cardHeaderLeft}>
+              <AppIcon
+                library="Ionicons"
+                name="cube-outline"
+                size={18}
+                color="#0284C7"
+              />
+              <Text style={styles.cardSectionTitleClean}>Items to Deliver</Text>
+            </View>
+            <View style={styles.itemCountBadge}>
+              <Text style={styles.itemCountBadgeText}>
+                {job.items && job.items.length > 0
+                  ? `${job.items.length} ${job.items.length === 1 ? "Item" : "Items"}`
+                  : "0 Items"}
+              </Text>
+            </View>
+          </View>
+
+          {job.items && job.items.length > 0 ? (
+            <View style={styles.itemListContainer}>
+              {job.items.map((item, idx) => (
+                <View
+                  key={item.id || `item-${idx}`}
+                  style={[
+                    styles.itemRow,
+                    idx < job.items.length - 1 && styles.itemRowBorder,
+                  ]}
+                >
+                  <View style={styles.itemQtyBadge}>
+                    <Text style={styles.itemQtyBadgeText}>
+                      {item.quantity ?? 1}×
+                    </Text>
+                  </View>
+                  <View style={styles.itemInfo}>
+                    <Text style={styles.itemNameText}>
+                      {item.name || item.description || `Item #${idx + 1}`}
+                    </Text>
+                    {item.description && item.description !== item.name ? (
+                      <Text style={styles.itemDescriptionText}>
+                        {item.description}
+                      </Text>
+                    ) : null}
+                    {item.notes ? (
+                      <View style={styles.itemNoteBadge}>
+                        <AppIcon
+                          library="Ionicons"
+                          name="information-circle-outline"
+                          size={12}
+                          color="#64748B"
+                        />
+                        <Text style={styles.itemNoteText}>{item.notes}</Text>
+                      </View>
+                    ) : null}
+                    {item.category ? (
+                      <Text style={styles.itemCategoryText}>
+                        Category: {item.category}
+                      </Text>
+                    ) : null}
+                  </View>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <View style={styles.emptyItemsBox}>
+              <AppIcon
+                library="Ionicons"
+                name="file-tray-outline"
+                size={28}
+                color="#94A3B8"
+              />
+              <Text style={styles.emptyItemsTitle}>No specific items listed</Text>
+              <Text style={styles.emptyItemsSubtitle}>
+                General freight / cargo move per booking details.
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {/* ── Special Instructions ── */}
+        <View style={styles.card}>
+          <View style={styles.cardHeaderRow}>
+            <View style={styles.cardHeaderLeft}>
+              <AppIcon
+                library="Ionicons"
+                name="document-text-outline"
+                size={18}
+                color="#0284C7"
+              />
+              <Text style={styles.cardSectionTitleClean}>Special Instructions</Text>
+            </View>
+          </View>
+          <Text style={styles.notesText}>
+            {job.notes || "No special instructions provided."}
+          </Text>
         </View>
 
         {/* ── Start Agreement Evidence (Read-Only) ── */}
@@ -968,12 +1299,53 @@ export default function JobDetailScreen({ route, navigation }) {
                 <Text style={styles.primaryActionText}>Start Job</Text>
               </TouchableOpacity>
             </View>
-          ) : myAssignment.canEndWork ? (
+          ) : (myAssignment.canEndWork || isMyWorkInProgress) ? (
             <View style={styles.actionSection}>
+              {isPaused ? (
+                <TouchableOpacity
+                  style={[styles.secondaryActionBtn, styles.resumeActionBtn]}
+                  onPress={handleResumeTimer}
+                  disabled={timerActionLoading}
+                  activeOpacity={0.75}
+                  accessibilityRole="button"
+                  accessibilityLabel="Resume job timer"
+                >
+                  {timerActionLoading ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <AppIcon library="Ionicons" name="play-sharp" size={19} color="#FFFFFF" />
+                      <Text style={styles.resumeActionText}>Resume Timer</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={[styles.secondaryActionBtn, styles.pauseActionBtn]}
+                  onPress={handlePauseTimer}
+                  disabled={timerActionLoading}
+                  activeOpacity={0.75}
+                  accessibilityRole="button"
+                  accessibilityLabel="Pause job timer"
+                >
+                  {timerActionLoading ? (
+                    <ActivityIndicator size="small" color="#B45309" />
+                  ) : (
+                    <>
+                      <AppIcon library="Ionicons" name="pause-sharp" size={19} color="#B45309" />
+                      <Text style={styles.pauseActionText}>Pause Timer</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
+
               <TouchableOpacity
-                style={[styles.primaryActionBtn, styles.endJobBtn]}
+                style={[styles.primaryActionBtn, styles.endJobBtn, { marginTop: 10 }]}
                 onPress={handleEndJob}
-                activeOpacity={0.7}
+                disabled={timerActionLoading}
+                activeOpacity={0.75}
+                accessibilityRole="button"
+                accessibilityLabel="End job and complete"
               >
                 <AppIcon library="Ionicons" name="checkmark-done-sharp" size={20} color="#FFF" />
                 <Text style={styles.primaryActionText}>End Job & Complete</Text>
@@ -1112,12 +1484,23 @@ const styles = StyleSheet.create({
   headerStatusTextCancelled: {
     color: "#B91C1C",
   },
+  headerStatusTextPaused: {
+    color: "#B45309",
+  },
   headerStatusDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
   },
+  headerStatusDotPaused: {
+    backgroundColor: "#D97706",
+  },
   headerStatusPending: {
+    backgroundColor: "#FEF3C7",
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+  },
+  headerStatusPaused: {
     backgroundColor: "#FEF3C7",
     borderWidth: 1,
     borderColor: "#FDE68A",
@@ -1348,30 +1731,37 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     backgroundColor: "#0B2545",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 14,
     marginTop: 12,
   },
-  liveTimerLeft: {
+  liveTimerInfoCol: {
+    flex: 1,
+    justifyContent: "center",
+    marginRight: 12,
+  },
+  liveTimerHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 6,
+    marginBottom: 4,
   },
   pulseDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
     backgroundColor: "#38BDF8",
   },
   liveTimerTitle: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#FFFFFF",
-    letterSpacing: 0.3,
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#94A3B8",
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
   },
   liveTimerClock: {
-    fontSize: 14,
+    fontSize: 18,
     fontWeight: "900",
     color: "#38BDF8",
     letterSpacing: 0.5,
@@ -1851,5 +2241,210 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#92400E",
     lineHeight: 18,
+  },
+  myStatusPillPaused: {
+    backgroundColor: "#FFFBEB",
+    borderColor: "#FDE68A",
+  },
+  myStatusPillTextPaused: {
+    color: "#D97706",
+  },
+  liveTimerBannerPaused: {
+    backgroundColor: "#1C1917",
+    borderWidth: 1.5,
+    borderColor: "#F59E0B",
+  },
+  pulseDotPaused: {
+    backgroundColor: "#F59E0B",
+  },
+  liveTimerTitlePaused: {
+    color: "#FDE68A",
+  },
+  liveTimerSubPaused: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: "#FCD34D",
+    marginTop: 3,
+  },
+  liveTimerClockPaused: {
+    color: "#F59E0B",
+  },
+  liveTimerActionCol: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  timerQuickBtnResume: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    backgroundColor: "#16A34A",
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 10,
+    minWidth: 88,
+  },
+  timerQuickBtnPause: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    backgroundColor: "#FEF3C7",
+    borderWidth: 1.5,
+    borderColor: "#FDE68A",
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 10,
+    minWidth: 88,
+  },
+  timerQuickBtnText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#FFFFFF",
+  },
+  timerQuickBtnPauseText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#B45309",
+  },
+  secondaryActionBtn: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 15,
+    borderRadius: 16,
+    borderWidth: 1.5,
+  },
+  resumeActionBtn: {
+    backgroundColor: "#0B2545",
+    borderColor: "#0284C7",
+    shadowColor: "#0B2545",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  resumeActionText: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#FFFFFF",
+  },
+  pauseActionBtn: {
+    backgroundColor: "#FFFBEB",
+    borderColor: "#F59E0B",
+    shadowColor: "#F59E0B",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  pauseActionText: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#B45309",
+  },
+  itemCountBadge: {
+    backgroundColor: "#F0F9FF",
+    borderWidth: 1,
+    borderColor: "#BAE6FD",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  itemCountBadgeText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#0284C7",
+  },
+  itemListContainer: {
+    marginTop: 4,
+  },
+  itemRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    paddingVertical: 10,
+    gap: 10,
+  },
+  itemRowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: "#F1F5F9",
+  },
+  itemQtyBadge: {
+    minWidth: 32,
+    height: 28,
+    borderRadius: 7,
+    backgroundColor: "#EFF6FF",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 6,
+    borderWidth: 1,
+    borderColor: "#DBEAFE",
+  },
+  itemQtyBadgeText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#1D4ED8",
+  },
+  itemInfo: {
+    flex: 1,
+  },
+  itemNameText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#0F172A",
+    lineHeight: 19,
+  },
+  itemDescriptionText: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: "#64748B",
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  itemNoteBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#F8FAFC",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginTop: 4,
+    alignSelf: "flex-start",
+  },
+  itemNoteText: {
+    fontSize: 11,
+    color: "#64748B",
+    fontWeight: "500",
+  },
+  itemCategoryText: {
+    fontSize: 11,
+    color: "#94A3B8",
+    marginTop: 2,
+    fontWeight: "600",
+  },
+  emptyItemsBox: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 18,
+    paddingHorizontal: 12,
+    backgroundColor: "#F8FAFC",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#F1F5F9",
+  },
+  emptyItemsTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#475569",
+    marginTop: 6,
+  },
+  emptyItemsSubtitle: {
+    fontSize: 11,
+    color: "#94A3B8",
+    textAlign: "center",
+    marginTop: 2,
   },
 });

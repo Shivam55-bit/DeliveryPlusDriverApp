@@ -2,16 +2,20 @@ import React, { memo } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { useElapsedTime, formatFormattedTimer } from "../utils/jobHelpers";
 
-const JobTimerBanner = memo(({ startedAt, style }) => {
-  const seconds = useElapsedTime(startedAt, true);
+const JobTimerBanner = memo(({ startedAt, pauseIntervals = [], isPaused = false, isRunning = true, style }) => {
+  const seconds = useElapsedTime(startedAt, !isPaused && isRunning, pauseIntervals, isPaused);
 
   return (
-    <View style={[styles.timerBanner, style]}>
+    <View style={[styles.timerBanner, isPaused && styles.pausedBanner, style]}>
       <View style={styles.timerLeft}>
-        <View style={styles.pulseDot} />
-        <Text style={styles.timerTitle}>Running Timer</Text>
+        <View style={[styles.pulseDot, isPaused && styles.pausedDot]} />
+        <Text style={styles.timerTitle}>
+          {isPaused ? "Timer Paused" : "Running Timer"}
+        </Text>
       </View>
-      <Text style={styles.timerClock}>{formatFormattedTimer(seconds)}</Text>
+      <Text style={[styles.timerClock, isPaused && styles.pausedClock]}>
+        {formatFormattedTimer(seconds)}
+      </Text>
     </View>
   );
 });
@@ -53,5 +57,16 @@ const styles = StyleSheet.create({
     color: "#38BDF8",
     letterSpacing: 1,
     fontVariant: ["tabular-nums"],
+  },
+  pausedBanner: {
+    backgroundColor: "#1E293B",
+    borderWidth: 1,
+    borderColor: "#F59E0B",
+  },
+  pausedDot: {
+    backgroundColor: "#F59E0B",
+  },
+  pausedClock: {
+    color: "#FBBF24",
   },
 });

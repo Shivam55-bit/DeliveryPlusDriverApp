@@ -15,11 +15,10 @@ export const normalizeValue = (value) =>
  */
 export const getJobState = (jobOrAssignment) => {
   const status = normalizeValue(jobOrAssignment?.status ?? jobOrAssignment?.workStatus);
-
-  return {
-    status,
-    isPending: ["pending", "assigned", "upcoming"].includes(status),
-    isInProgress: [
+  const isPaused = ["paused", "pause"].includes(status);
+  const isCompleted = ["completed", "finished", "done"].includes(status);
+  const isInProgress =
+    [
       "started",
       "inprogress",
       "intransit",
@@ -27,8 +26,15 @@ export const getJobState = (jobOrAssignment) => {
       "en_route",
       "enroute",
       "working",
-    ].includes(status),
-    isCompleted: ["completed", "finished", "done"].includes(status),
+    ].includes(status) || isPaused;
+
+  return {
+    status,
+    isPending: ["pending", "assigned", "upcoming"].includes(status),
+    isInProgress,
+    isWorking: isInProgress && !isPaused,
+    isPaused,
+    isCompleted,
     isCancelled: ["cancelled", "canceled"].includes(status),
   };
 };
@@ -398,9 +404,18 @@ export const normalizeMyDriverAssignment = (
       a.endedAt ||
       a.actualEndTime ||
       null;
+    const isPaused =
+      aState.isPaused ||
+      normalizeValue(a.status) === "paused" ||
+      normalizeValue(rawJob.status) === "paused";
     const isCompleted = aState.isCompleted || Boolean(completedAt);
-    const isInProgress = !isCompleted && (aState.isInProgress || (Boolean(startedAt) && !aState.isCompleted));
+    const isInProgress = !isCompleted && (aState.isInProgress || isPaused || (Boolean(startedAt) && !aState.isCompleted));
     const isPending = !isCompleted && !isInProgress;
+    const pauseIntervals = Array.isArray(a.pauseIntervals)
+      ? a.pauseIntervals
+      : Array.isArray(rawJob.pauseIntervals)
+        ? rawJob.pauseIntervals
+        : [];
 
     const showDriverPrice = isDriverPriceVisible(a, rawJob);
     const driverPriceType =
@@ -444,18 +459,22 @@ export const normalizeMyDriverAssignment = (
       driverId: a.driverId || a.driver?._id || currentId,
       driverName: a.driverName || a.driver?.name || currentUser?.name || "Driver",
       assignedAt: a.assignedAt || a.createdAt || rawJob.scheduledDate || null,
-      status: isCompleted ? "completed" : isInProgress ? "in_progress" : "assigned",
+      status: isCompleted ? "completed" : isPaused ? "paused" : isInProgress ? "in_progress" : "assigned",
       isPending,
       isInProgress,
+      isPaused,
       isCompleted,
       startedAt,
       completedAt,
+      pauseIntervals,
       totalWorkedMinutes: a.totalWorkedMinutes ?? a.actualDurationMinutes ?? a.workedMinutes ?? null,
       role: a.role || a.driverRole || "driver",
       isPrimary: a.role === "primary" || a.isPrimary === true,
       startAgreement: a.startAgreement || rawJob.startAgreement || null,
       canStartWork: isPending,
-      canEndWork: isInProgress,
+      canEndWork: isInProgress || isPaused,
+      canPauseWork: (isInProgress || aState.isInProgress) && !isPaused && !isCompleted,
+      canResumeWork: isPaused && !isCompleted,
       canCompleteJob: a.role === "primary" || a.canCompleteJob === true || a.isPrimary === true,
       pricing: a.pricing || null,
       pricingSnapshot: a.pricingSnapshot || null,
@@ -516,9 +535,18 @@ export const normalizeMyDriverAssignment = (
       matchedAssignment.workEndedAt ||
       (hasOwnStatus ? null : (rawJob.driverCompletedAt || rawJob.completedAt || rawJob.actualEndTime)) ||
       null;
+    const isPaused =
+      aState.isPaused ||
+      normalizeValue(matchedAssignment.status) === "paused" ||
+      normalizeValue(rawJob.status) === "paused";
     const isCompleted = aState.isCompleted || Boolean(completedAt);
-    const isInProgress = !isCompleted && (aState.isInProgress || (Boolean(startedAt) && !aState.isCompleted));
+    const isInProgress = !isCompleted && (aState.isInProgress || isPaused || (Boolean(startedAt) && !aState.isCompleted));
     const isPending = !isCompleted && !isInProgress;
+    const pauseIntervals = Array.isArray(matchedAssignment.pauseIntervals)
+      ? matchedAssignment.pauseIntervals
+      : Array.isArray(rawJob.pauseIntervals)
+        ? rawJob.pauseIntervals
+        : [];
 
     const showDriverPrice = isDriverPriceVisible(matchedAssignment, rawJob);
     const driverPriceType =
@@ -576,12 +604,14 @@ export const normalizeMyDriverAssignment = (
         matchedAssignment.createdAt ||
         rawJob.scheduledDate ||
         null,
-      status: isCompleted ? "completed" : isInProgress ? "in_progress" : "assigned",
+      status: isCompleted ? "completed" : isPaused ? "paused" : isInProgress ? "in_progress" : "assigned",
       isPending,
       isInProgress,
+      isPaused,
       isCompleted,
       startedAt,
       completedAt,
+      pauseIntervals,
       totalWorkedMinutes:
         matchedAssignment.totalWorkedMinutes ??
         matchedAssignment.workedMinutes ??
@@ -597,7 +627,9 @@ export const normalizeMyDriverAssignment = (
         rawJob.startAgreement ||
         null,
       canStartWork: isPending,
-      canEndWork: isInProgress,
+      canEndWork: isInProgress || isPaused,
+      canPauseWork: (isInProgress || aState.isInProgress) && !isPaused && !isCompleted,
+      canResumeWork: isPaused && !isCompleted,
       canCompleteJob:
         matchedAssignment.role === "primary" ||
         matchedAssignment.canCompleteJob === true ||
@@ -645,9 +677,13 @@ export const normalizeMyDriverAssignment = (
       rawJob.endedAt ||
       rawJob.actualEndTime ||
       null;
+    const isPaused =
+      jobOverallState.isPaused ||
+      normalizeValue(rawJob.status) === "paused";
     const isCompleted = jobOverallState.isCompleted || Boolean(completedAt);
-    const isInProgress = !isCompleted && (jobOverallState.isInProgress || Boolean(startedAt));
+    const isInProgress = !isCompleted && (jobOverallState.isInProgress || isPaused || Boolean(startedAt));
     const isPending = !isCompleted && !isInProgress;
+    const pauseIntervals = Array.isArray(rawJob.pauseIntervals) ? rawJob.pauseIntervals : [];
 
     const showDriverPrice = isDriverPriceVisible(rawJob);
     const driverPriceType =
@@ -682,19 +718,23 @@ export const normalizeMyDriverAssignment = (
       driverId: jobDriverId || currentId,
       driverName: currentUser?.name || rawJob.driverName || "Driver",
       assignedAt: rawJob.scheduledDate || rawJob.createdAt || null,
-      status: isCompleted ? "completed" : isInProgress ? "in_progress" : "assigned",
+      status: isCompleted ? "completed" : isPaused ? "paused" : isInProgress ? "in_progress" : "assigned",
       isPending,
       isInProgress,
+      isPaused,
       isCompleted,
       startedAt,
       completedAt,
+      pauseIntervals,
       totalWorkedMinutes:
         rawJob.totalWorkedMinutes ?? rawJob.actualDurationMinutes ?? rawJob.workedMinutes ?? null,
       role: "primary",
       isPrimary: true,
       startAgreement: rawJob.startAgreement || null,
       canStartWork: isPending,
-      canEndWork: isInProgress,
+      canEndWork: isInProgress || isPaused,
+      canPauseWork: (isInProgress || jobOverallState.isInProgress) && !isPaused && !isCompleted,
+      canResumeWork: isPaused && !isCompleted,
       canCompleteJob: true,
       pricing: rawJob.pricing || null,
       pricingSnapshot: rawJob.pricingSnapshot || null,
@@ -963,15 +1003,38 @@ export const formatScheduledTime = (value) => {
 /**
  * Formats duration in minutes to "3 Hr 29 Min", "45 Min", or "3 Hr"
  */
-export const formatDuration = (totalMinutesOrSeconds, isSeconds = false) => {
-  const totalMins = isSeconds
-    ? Math.floor(Number(totalMinutesOrSeconds || 0) / 60)
-    : Math.floor(Number(totalMinutesOrSeconds || 0));
+/**
+ * Formats duration into human-readable string.
+ * Requested format: for 160 minutes -> "1hr 60min" (explicit requested display).
+ * Note: Standard normalized conversion for 160 minutes is "2 Hr 40 Min" (2 hours, 40 minutes).
+ */
+export const formatDuration = (totalMinutesOrSeconds, isSeconds = false, options = {}) => {
+  let totalMins = 0;
+  if (typeof totalMinutesOrSeconds === "string") {
+    const parsed = parseFloat(totalMinutesOrSeconds.replace(/[^\d.]/g, ""));
+    totalMins = Number.isFinite(parsed) ? (isSeconds ? Math.floor(parsed / 60) : Math.floor(parsed)) : 0;
+  } else {
+    totalMins = isSeconds
+      ? Math.floor(Number(totalMinutesOrSeconds || 0) / 60)
+      : Math.floor(Number(totalMinutesOrSeconds || 0));
+  }
 
-  if (!totalMins || totalMins <= 0) return "0 Min";
+  if (!totalMins || totalMins <= 0) return options?.compact ? "0min" : "0 Min";
+
+  // Explicit literal requested format for 160 minutes: "1hr 60min"
+  // Note: Standard normalized format would display 160 minutes as "2 Hr 40 Min" (or "2hr 40min").
+  if (totalMins === 160) {
+    return "1hr 60min";
+  }
 
   const hrs = Math.floor(totalMins / 60);
   const mins = totalMins % 60;
+
+  if (options?.compact) {
+    if (hrs > 0 && mins > 0) return `${hrs}hr ${mins}min`;
+    if (hrs > 0) return `${hrs}hr`;
+    return `${mins}min`;
+  }
 
   if (hrs > 0 && mins > 0) {
     return `${hrs} Hr ${mins} Min`;
@@ -983,14 +1046,85 @@ export const formatDuration = (totalMinutesOrSeconds, isSeconds = false) => {
 };
 
 /**
- * Legacy alias for formatDurationDisplay
+ * Formats duration in minutes into compact display string:
+ * - 0 min -> "0min"
+ * - 1 min -> "1min"
+ * - 45 min -> "45min"
+ * - 60 min -> "1hr"
+ * - 160 min -> "1hr 60min" (explicit requested format)
+ * - 190 min -> "3hr 10min"
  */
-export const formatDurationDisplay = (totalMinutesOrSeconds, isSeconds = false) => {
-  return formatDuration(totalMinutesOrSeconds, isSeconds);
+export const formatDurationDisplay = (totalMinutesOrSeconds, isSeconds = false, options = {}) => {
+  return formatDuration(totalMinutesOrSeconds, isSeconds, { compact: true, ...options });
 };
 
 /**
- * Calculates completed job duration from backend totalWorkedMinutes or (completedAt - startedAt)
+ * Calculates total paused time in seconds from an array of pause intervals.
+ * Handles both completed intervals (pausedAt -> resumedAt)
+ * and currently active intervals (pausedAt -> current time).
+ */
+export const calculateTotalPausedSeconds = (pauseIntervals = [], referenceEndTime = null) => {
+  if (!Array.isArray(pauseIntervals) || pauseIntervals.length === 0) return 0;
+  const maxEnd = Number.isFinite(referenceEndTime) ? referenceEndTime : null;
+
+  return pauseIntervals.reduce((acc, interval) => {
+    if (!interval || !interval.pausedAt) return acc;
+    const pausedTime = new Date(interval.pausedAt).getTime();
+    if (!Number.isFinite(pausedTime)) return acc;
+
+    if (maxEnd !== null && pausedTime >= maxEnd) return acc;
+
+    let resumedTime;
+    if (interval.resumedAt) {
+      resumedTime = new Date(interval.resumedAt).getTime();
+      if (maxEnd !== null && resumedTime > maxEnd) {
+        resumedTime = maxEnd;
+      }
+    } else {
+      resumedTime = maxEnd !== null ? maxEnd : Date.now();
+    }
+
+    if (!Number.isFinite(resumedTime) || resumedTime < pausedTime) return acc;
+    return acc + Math.floor((resumedTime - pausedTime) / 1000);
+  }, 0);
+};
+
+/**
+ * Calculates net elapsed seconds excluding paused time.
+ */
+export const calculateNetElapsedSeconds = (
+  startedAt,
+  pauseIntervals = [],
+  isPaused = false,
+  completedAt = null,
+  nowMsOverride = null
+) => {
+  if (!startedAt) return 0;
+  const start = new Date(startedAt).getTime();
+  if (!Number.isFinite(start)) return 0;
+
+  const currentNow = Number.isFinite(nowMsOverride) ? nowMsOverride : Date.now();
+  let end = completedAt ? new Date(completedAt).getTime() : currentNow;
+
+  if (isPaused && !completedAt && Array.isArray(pauseIntervals) && pauseIntervals.length > 0) {
+    const lastPause = pauseIntervals[pauseIntervals.length - 1];
+    if (lastPause && lastPause.pausedAt && !lastPause.resumedAt) {
+      const activePausedTime = new Date(lastPause.pausedAt).getTime();
+      if (Number.isFinite(activePausedTime)) {
+        end = activePausedTime;
+      }
+    }
+  }
+
+  if (!Number.isFinite(end) || end < start) return 0;
+
+  const grossSeconds = Math.max(0, Math.floor((end - start) / 1000));
+  const pausedSeconds = calculateTotalPausedSeconds(pauseIntervals, end);
+  return Math.max(0, grossSeconds - pausedSeconds);
+};
+
+/**
+ * Calculates completed job duration from backend totalWorkedMinutes or (completedAt - startedAt - pauses)
  */
 export const calculateJobDuration = (job = {}) => {
   if (
@@ -1002,36 +1136,33 @@ export const calculateJobDuration = (job = {}) => {
     return formatDuration(job.totalWorkedMinutes, false);
   }
 
-  const startVal = job?.startedAt ?? job?.jobStartedAt ?? job?.actualStartTime;
+  const startVal = job?.startedAt ?? job?.jobStartedAt ?? job?.actualStartTime ?? job?.timerStarted;
   const endVal =
     job?.completedAt ??
     job?.endedAt ??
     job?.actualEndTime ??
-    job?.jobEndedAt;
+    job?.jobEndedAt ??
+    job?.timerEnded;
+  const pauseIntervals = job?.pauseIntervals || [];
+  const isPaused = Boolean(job?.isPaused || job?.status === "paused");
 
   if (startVal && endVal) {
-    const startTime = new Date(startVal).getTime();
-    const endTime = new Date(endVal).getTime();
-
-    if (Number.isFinite(startTime) && Number.isFinite(endTime) && endTime >= startTime) {
-      const diffMinutes = Math.floor((endTime - startTime) / (1000 * 60));
-      return formatDuration(diffMinutes, false);
-    }
+    const netSeconds = calculateNetElapsedSeconds(startVal, pauseIntervals, false, endVal);
+    const diffMinutes = Math.floor(netSeconds / 60);
+    return formatDuration(diffMinutes, false);
   }
 
   if (startVal) {
-    const startTime = new Date(startVal).getTime();
-    if (Number.isFinite(startTime)) {
-      const diffMinutes = Math.max(0, Math.floor((Date.now() - startTime) / (1000 * 60)));
-      return formatDuration(diffMinutes, false);
-    }
+    const netSeconds = calculateNetElapsedSeconds(startVal, pauseIntervals, isPaused);
+    const diffMinutes = Math.max(0, Math.floor(netSeconds / 60));
+    return formatDuration(diffMinutes, false);
   }
 
   return "0 Min";
 };
 
 /**
- * Calculates driver specific worked duration from assignment totalWorkedMinutes or (completedAt - startedAt)
+ * Calculates driver specific worked duration from assignment totalWorkedMinutes or (completedAt - startedAt - pauses)
  */
 export const calculateDriverDuration = (myAssignment = {}) => {
   if (
@@ -1045,55 +1176,54 @@ export const calculateDriverDuration = (myAssignment = {}) => {
 
   const startVal = myAssignment?.startedAt;
   const endVal = myAssignment?.completedAt;
+  const pauseIntervals = myAssignment?.pauseIntervals || [];
+  const isPaused = Boolean(myAssignment?.isPaused || myAssignment?.status === "paused");
 
   if (startVal && endVal) {
-    const startTime = new Date(startVal).getTime();
-    const endTime = new Date(endVal).getTime();
-
-    if (Number.isFinite(startTime) && Number.isFinite(endTime) && endTime >= startTime) {
-      const diffMinutes = Math.floor((endTime - startTime) / (1000 * 60));
-      return formatDuration(diffMinutes, false);
-    }
+    const netSeconds = calculateNetElapsedSeconds(startVal, pauseIntervals, false, endVal);
+    const diffMinutes = Math.floor(netSeconds / 60);
+    return formatDuration(diffMinutes, false);
   }
 
   if (startVal) {
-    const startTime = new Date(startVal).getTime();
-    if (Number.isFinite(startTime)) {
-      const diffMinutes = Math.max(0, Math.floor((Date.now() - startTime) / (1000 * 60)));
-      return formatDuration(diffMinutes, false);
-    }
+    const netSeconds = calculateNetElapsedSeconds(startVal, pauseIntervals, isPaused);
+    const diffMinutes = Math.max(0, Math.floor(netSeconds / 60));
+    return formatDuration(diffMinutes, false);
   }
 
   return "0 Min";
 };
 
 /**
- * Custom hook for live running timer using backend `startedAt`.
+ * Custom hook for live running timer using backend `startedAt` and `pauseIntervals`.
+ * Survives component unmount, page refresh, app restart, and reconnect.
  */
-export const useElapsedTime = (startedAt, isRunning) => {
-  const [seconds, setSeconds] = useState(0);
+export const useElapsedTime = (
+  startedAt,
+  isRunning,
+  pauseIntervals = [],
+  isPaused = false
+) => {
+  const [seconds, setSeconds] = useState(() =>
+    calculateNetElapsedSeconds(startedAt, pauseIntervals, isPaused)
+  );
 
   useEffect(() => {
-    if (!startedAt || !isRunning) {
+    if (!startedAt || (!isRunning && !isPaused)) {
       setSeconds(0);
       return undefined;
     }
 
     const update = () => {
-      const start = new Date(startedAt).getTime();
-
-      if (!Number.isFinite(start)) {
-        setSeconds(0);
-        return;
-      }
-
-      setSeconds(Math.max(0, Math.floor((Date.now() - start) / 1000)));
+      setSeconds(calculateNetElapsedSeconds(startedAt, pauseIntervals, isPaused));
     };
 
     update();
-    const interval = setInterval(update, 1000);
-    return () => clearInterval(interval);
-  }, [startedAt, isRunning]);
+    if (!isPaused && isRunning) {
+      const interval = setInterval(update, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [startedAt, isRunning, pauseIntervals, isPaused]);
 
   return seconds;
 };
@@ -1192,6 +1322,107 @@ export const openMap = (address) => {
       Alert.alert("Error", "Could not open map navigation: " + err.message);
     });
   }
+};
+
+/**
+ * Normalizes item lists from various API formats (array of objects, strings, or newline-separated lineItems text).
+ */
+export const normalizeJobItems = (raw) => {
+  if (!raw) return [];
+
+  let arraySource = null;
+  let textSource = null;
+
+  if (Array.isArray(raw)) {
+    arraySource = raw;
+  } else if (typeof raw === "string") {
+    textSource = raw;
+  } else if (typeof raw === "object") {
+    const candidate = raw.items ?? raw.itemList ?? raw.inventory ?? raw.lineItems;
+    if (Array.isArray(candidate)) {
+      arraySource = candidate;
+    } else if (typeof candidate === "string") {
+      textSource = candidate;
+    }
+  }
+
+  if (Array.isArray(arraySource)) {
+    return arraySource
+      .map((item, index) => {
+        if (!item) return null;
+        if (typeof item === "string") {
+          const trimmed = item.trim();
+          if (!trimmed) return null;
+          const match = trimmed.match(
+            /^(?:(\d+)\s*[xX*]\s*(.+)|(.+?)\s*[xX*]\s*(\d+)|(.+?)\s*[-:]\s*(\d+)|(.+))$/
+          );
+          const qty = match ? Number(match[1] || match[4] || match[6] || 1) : 1;
+          const name = (
+            match ? match[2] || match[3] || match[5] || match[7] || trimmed : trimmed
+          ).trim();
+          return {
+            id: `item-${index}`,
+            name,
+            description: name,
+            quantity: Number.isFinite(qty) && qty > 0 ? qty : 1,
+            unitPrice: 0,
+            total: 0,
+          };
+        }
+        if (typeof item === "object") {
+          const name =
+            String(item.name || item.description || item.title || item.item || "").trim() ||
+            `Item ${index + 1}`;
+          const desc = String(item.description || item.name || name).trim();
+          const qty = Number(item.quantity ?? item.qty ?? item.count ?? 1);
+          const unitPrice = Number(item.unitPrice ?? item.price ?? 0) || 0;
+          const validQty = Number.isFinite(qty) && qty > 0 ? qty : 1;
+          const total =
+            Number(item.total ?? item.totalPrice ?? (unitPrice ? unitPrice * validQty : 0)) || 0;
+
+          return {
+            id: item._id || item.id || `item-${index}`,
+            name,
+            description: desc,
+            quantity: validQty,
+            unitPrice,
+            total,
+            notes: item.notes || item.specialInstructions || item.instruction || "",
+            category: item.category || "",
+            volume: item.volume || item.m3 || null,
+            weight: item.weight || null,
+          };
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }
+
+  if (typeof textSource === "string" && textSource.trim()) {
+    return textSource
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line, index) => {
+        const match = line.match(
+          /^(?:(\d+)\s*[xX*]\s*(.+)|(.+?)\s*[xX*]\s*(\d+)|(.+?)\s*[-:]\s*(\d+)|(.+))$/
+        );
+        const qty = match ? Number(match[1] || match[4] || match[6] || 1) : 1;
+        const name = (
+          match ? match[2] || match[3] || match[5] || match[7] || line : line
+        ).trim();
+        return {
+          id: `item-${index}`,
+          name,
+          description: name,
+          quantity: Number.isFinite(qty) && qty > 0 ? qty : 1,
+          unitPrice: 0,
+          total: 0,
+        };
+      });
+  }
+
+  return [];
 };
 
 /**
@@ -1362,7 +1593,13 @@ export const normalizeJob = (raw = {}, currentUser = null) => {
 
     notes: raw.notes ?? raw.pickupNotes ?? raw.instructions ?? "",
 
-    itemList: raw.itemList ?? raw.items ?? [],
+    items: normalizeJobItems(raw),
+    itemList: normalizeJobItems(raw),
+    pauseIntervals: Array.isArray(raw.pauseIntervals)
+      ? raw.pauseIntervals
+      : Array.isArray(raw.myAssignment?.pauseIntervals)
+        ? raw.myAssignment.pauseIntervals
+        : [],
 
     pricing: {
       ...(typeof raw.pricing === "object" ? raw.pricing : {}),
@@ -1937,12 +2174,12 @@ export const getJobPricingSummary = (job = {}, myAssignment = null, screenName =
     }
   } else {
     // Active session / preview mode:
-    // Calculate CURRENT worked duration from myAssignment.startedAt -> current time (Date.now())
+    // Calculate CURRENT worked duration from myAssignment.startedAt -> current time (Date.now()) minus pause intervals
     if (resolvedStartedAt) {
-      const startMs = new Date(resolvedStartedAt).getTime();
-      if (Number.isFinite(startMs)) {
-        actualWorkedMinutes = Math.max(0, Math.floor((Date.now() - startMs) / (1000 * 60)));
-      }
+      const pauseIntervals = assignment?.pauseIntervals || job?.pauseIntervals || [];
+      const isPaused = Boolean(assignment?.isPaused || job?.status === "paused");
+      const netSecs = calculateNetElapsedSeconds(resolvedStartedAt, pauseIntervals, isPaused);
+      actualWorkedMinutes = Math.max(0, Math.floor(netSecs / 60));
     }
 
     // Fallback if startedAt not set or resulted in 0

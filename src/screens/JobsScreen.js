@@ -403,18 +403,24 @@ export default function JobsScreen({ navigation }) {
   const renderJob = ({ item }) => {
     const statusStyle = item.statusStyle;
     const isCompleted = item.status === "completed";
-    const isInProgress = item.status === "started" || item.status === "inTransit" || item.status === "arrived";
+    const isPaused = item.status === "paused" || Boolean(item.myAssignment?.isPaused);
+    const isInProgress =
+      item.status === "started" ||
+      item.status === "inTransit" ||
+      item.status === "arrived" ||
+      isPaused;
 
-    const actionLabel =
-      item.status === "pending" || item.status === "assigned"
-        ? "Start Job"
-        : item.status === "inTransit"
-        ? "Navigate"
-        : item.status === "arrived"
-        ? "Start Work"
-        : isInProgress
-        ? "Continue Job"
-        : "View Details";
+    const actionLabel = isPaused
+      ? "Resume Job"
+      : item.status === "pending" || item.status === "assigned"
+      ? "Start Job"
+      : item.status === "inTransit"
+      ? "Navigate"
+      : item.status === "arrived"
+      ? "Start Work"
+      : isInProgress
+      ? "Continue Job"
+      : "View Details";
 
     const handleNavigate = () =>
       navigation.navigate("JobDetail", {
@@ -535,9 +541,14 @@ export default function JobsScreen({ navigation }) {
         </View>
 
         {/* Running Live Timer if active */}
-        {isInProgress && item.startedAt ? (
+        {(isInProgress || isPaused) && item.startedAt ? (
           <View style={styles.timerWrap}>
-            <JobTimerBanner startedAt={item.startedAt} />
+            <JobTimerBanner
+              startedAt={item.startedAt}
+              pauseIntervals={item.pauseIntervals || item.myAssignment?.pauseIntervals}
+              isPaused={isPaused}
+              isRunning={!isPaused}
+            />
           </View>
         ) : null}
 

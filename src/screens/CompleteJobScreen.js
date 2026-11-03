@@ -413,6 +413,13 @@ export default function CompleteJobScreen({ navigation, route }) {
       };
 
       await sendFinalDriverLocation();
+      if (currentJob?.status === "paused" || currentJob?.myAssignment?.isPaused) {
+        try {
+          await API.post(`/jobs/${targetJobId}/resume`);
+        } catch (resErr) {
+          console.warn("[CompleteJobScreen] Auto-resume before complete note:", resErr?.message);
+        }
+      }
       await API.post(`/jobs/${targetJobId}/complete`, payload);
       invalidateDriverJobsCache();
       setDriverActiveJobTracking(false).catch(() => {

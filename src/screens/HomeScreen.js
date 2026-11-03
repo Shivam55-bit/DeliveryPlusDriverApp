@@ -801,8 +801,12 @@ const JobCard = memo(({ job, onPress }) => {
         dropoff={job.dropoff}
       />
 
-      {job.status === "inProgress" && job.startedAt ? (
-        <JobTimerBanner startedAt={job.startedAt} />
+      {(job.status === "inProgress" || job.status === "in_progress" || job.status === "started" || job.status === "paused" || job.myAssignment?.isInProgress || job.myAssignment?.isPaused) && (job.startedAt || job.myAssignment?.startedAt) ? (
+        <JobTimerBanner
+          startedAt={job.myAssignment?.startedAt || job.startedAt}
+          pauseIntervals={job.myAssignment?.pauseIntervals || job.pauseIntervals}
+          isPaused={job.status === "paused" || Boolean(job.myAssignment?.isPaused)}
+        />
       ) : null}
 
       <View style={styles.jobFooter}>
